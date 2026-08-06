@@ -1,6 +1,7 @@
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
@@ -46,6 +47,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+# All non-health routes live under /api — this keeps them from colliding with
+# the frontend's own client-side routes (e.g. GET /templates the API endpoint
+# vs. the SPA's /templates page) when both are served from one origin/service.
+api = APIRouter(prefix="/api")
 
 
 @app.on_event("startup")
@@ -193,7 +200,7 @@ class MasterDataUpdate(BaseModel):
 
 
 # --- Auth ---
-@app.post("/auth/login")
+@api.post("/auth/login")
 def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
     _check_login_rate_limit(request.client.host if request.client else "unknown")
     user = db.query(UserRecord).filter(UserRecord.email == req.email).first()
@@ -208,18 +215,18 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
 
 
 # --- Templates ---
-@app.get("/templates")
+@api.get("/templates")
 def get_templates(db: Session = Depends(get_db), user: UserRecord = Depends(get_current_user)):
     return [r.payload for r in db.query(TemplateRecord).all()]
 
-@app.get("/templates/{template_id}")
+@api.get("/templates/{template_id}")
 def get_template(template_id: str, db: Session = Depends(get_db), user: UserRecord = Depends(get_current_user)):
     record = db.query(TemplateRecord).filter(TemplateRecord.id == template_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="Template not found")
     return record.payload
 
-@app.post("/templates")
+@api.post("/templates")
 def create_template(template: TemplateCreate, db: Session = Depends(get_db), user: UserRecord = Depends(require_roles("Admin", "Editor"))):
     new_id = str(uuid.uuid4())
     data = template.model_dump()
@@ -231,7 +238,7 @@ def create_template(template: TemplateCreate, db: Session = Depends(get_db), use
     db.commit()
     return data
 
-@app.put("/templates/{template_id}")
+@api.put("/templates/{template_id}")
 def update_template(template_id: str, template: TemplateUpdate, db: Session = Depends(get_db), user: UserRecord = Depends(require_roles("Admin", "Editor"))):
     record = db.query(TemplateRecord).filter(TemplateRecord.id == template_id).first()
     if not record:
@@ -245,7 +252,7 @@ def update_template(template_id: str, template: TemplateUpdate, db: Session = De
     db.commit()
     return updated_data
 
-@app.delete("/templates/{template_id}")
+@api.delete("/templates/{template_id}")
 def delete_template(template_id: str, db: Session = Depends(get_db), user: UserRecord = Depends(require_roles("Admin", "Editor"))):
     record = db.query(TemplateRecord).filter(TemplateRecord.id == template_id).first()
     if not record:
@@ -254,7 +261,7 @@ def delete_template(template_id: str, db: Session = Depends(get_db), user: UserR
     db.commit()
     return {"deleted": True, "id": template_id}
 
-@app.get("/categories")
+@api.get("/categories")
 def get_categories(db: Session = Depends(get_db), user: UserRecord = Depends(get_current_user)):
     record = db.query(ConfigRecord).filter(ConfigRecord.key == MASTER_DATA_KEY).first()
     if not record:
@@ -262,14 +269,14 @@ def get_categories(db: Session = Depends(get_db), user: UserRecord = Depends(get
     return [i["name"] for i in record.payload["lists"]["categories"]["items"] if i.get("active", True)]
 
 # --- Master Data (org-wide reference lists: categories, departments, languages, priorities) ---
-@app.get("/master-data")
+@api.get("/master-data")
 def get_master_data(db: Session = Depends(get_db), user: UserRecord = Depends(get_current_user)):
     record = db.query(ConfigRecord).filter(ConfigRecord.key == MASTER_DATA_KEY).first()
     if not record:
         raise HTTPException(status_code=404, detail="Master data not configured")
     return record.payload
 
-@app.put("/master-data")
+@api.put("/master-data")
 def update_master_data(body: MasterDataUpdate, db: Session = Depends(get_db), user: UserRecord = Depends(require_roles("Admin"))):
     record = db.query(ConfigRecord).filter(ConfigRecord.key == MASTER_DATA_KEY).first()
     if not record:
@@ -281,7 +288,7 @@ def update_master_data(body: MasterDataUpdate, db: Session = Depends(get_db), us
     db.commit()
     return payload
 
-@app.get("/variables")
+@api.get("/variables")
 def get_variables(db: Session = Depends(get_db), user: UserRecord = Depends(get_current_user)):
     return [r.payload for r in db.query(VariableRecord).all()]
 
@@ -306,7 +313,7 @@ class AIActionRequest(BaseModel):
     content: str
     targetLanguage: Optional[str] = None
 
-@app.post("/ai/action")
+@api.post("/ai/action")
 def ai_action(req: AIActionRequest, user: UserRecord = Depends(require_roles("Admin", "Editor"))):
     if not GROQ_API_KEY:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY is not configured on the server")
@@ -345,6 +352,32 @@ def ai_action(req: AIActionRequest, user: UserRecord = Depends(require_roles("Ad
         return {"result": result}
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=f"Groq API request failed: {e}")
+
+
+app.include_router(api)
+
+# Optionally serve the built frontend from this same service (single-service
+# deploy). Only activates when frontend/dist actually exists — i.e. the build
+# command built it — so local dev (where the frontend runs on its own Vite
+# dev server) is completely unaffected.
+FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend", "dist")
+
+if os.path.isdir(FRONTEND_DIST):
+    assets_dir = os.path.join(FRONTEND_DIST, "assets")
+    if os.path.isdir(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        candidate = os.path.join(FRONTEND_DIST, full_path)
+        if full_path and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
+
+    logger.info("Serving built frontend from %s", FRONTEND_DIST)
+else:
+    logger.info("frontend/dist not found — running API-only (normal for local dev)")
+
 
 if __name__ == "__main__":
     import uvicorn
