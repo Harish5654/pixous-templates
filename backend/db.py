@@ -1,9 +1,22 @@
+import os
+
 from sqlalchemy import create_engine, Column, String, Integer, JSON
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = "sqlite:///./app.db"
+# Render (and most Postgres hosts) inject DATABASE_URL automatically once a
+# database is linked to the service. Falls back to a local SQLite file when
+# unset, so local dev needs no extra setup.
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./app.db")
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# Some hosts hand out URLs starting with "postgres://", which SQLAlchemy 1.4+
+# no longer accepts — it requires the "postgresql://" scheme.
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# check_same_thread is a SQLite-only connect arg; Postgres rejects it.
+_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+
+engine = create_engine(DATABASE_URL, connect_args=_connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
