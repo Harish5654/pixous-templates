@@ -1,0 +1,777 @@
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy.orm import Session
+
+from auth import hash_password
+from db import ConfigRecord, TemplateRecord, UserRecord, VariableRecord
+
+NOTICE_CATEGORIES = ["Security", "Infrastructure", "IT", "HR", "Facilities", "Projects", "Management", "Support"]
+
+MASTER_DATA_KEY = "master-data"
+
+
+def _item(name, **extra):
+    return {"id": str(uuid.uuid4()), "name": name, "active": True, **extra}
+
+
+def build_master_data():
+    category_names = [
+        "Client Communication", "Meeting Minutes", "Checklists", "Announcements", "Policies", "Events",
+        "Recruitment", "Business Documents", "Employee Announcements"
+    ] + NOTICE_CATEGORIES
+
+    return {
+        "updatedBy": "System",
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "lists": {
+            "categories": {
+                "items": [_item(name, parentId=None) for name in category_names],
+            },
+            "departments": {
+                "items": [_item(name) for name in ["HR", "Engineering", "Sales", "Finance", "IT"]],
+            },
+            "languages": {
+                "items": [_item(name) for name in [
+                    "English", "Hindi", "Spanish", "French", "German", "Portuguese", "Italian", "Dutch",
+                    "Arabic", "Russian", "Chinese (Simplified)", "Japanese", "Korean", "Vietnamese",
+                    "Tamil", "Telugu", "Bengali", "Marathi", "Gujarati", "Kannada",
+                ]],
+                "default": "English",
+            },
+            "priorities": {
+                "items": [
+                    {"id": str(uuid.uuid4()), "name": "Critical", "active": True, "order": 0, "badgeClass": "badge-danger", "description": "Urgent, time-sensitive", "requiresAcknowledgementDefault": True},
+                    {"id": str(uuid.uuid4()), "name": "High", "active": True, "order": 1, "badgeClass": "badge-warning", "description": "Important, needs prompt attention", "requiresAcknowledgementDefault": False},
+                    {"id": str(uuid.uuid4()), "name": "Normal", "active": True, "order": 2, "badgeClass": "badge-neutral", "description": "Standard priority", "requiresAcknowledgementDefault": False},
+                    {"id": str(uuid.uuid4()), "name": "Low", "active": True, "order": 3, "badgeClass": "badge-neutral", "description": "No urgency", "requiresAcknowledgementDefault": False},
+                ],
+            },
+        },
+    }
+
+
+def get_default_sections():
+    return [
+        {"id": "s1", "name": "Participants", "type": "PeoplePicker", "enabled": True, "order": 1, "required": True, "defaultContent": ["Name", "Role", "Organization", "Attendance"]},
+        {"id": "s2", "name": "Agenda", "type": "RichText", "enabled": True, "order": 2, "required": True, "defaultContent": "1. \n2. \n3. "},
+        {"id": "s3", "name": "Discussion", "type": "RichText", "enabled": True, "order": 3, "required": False, "defaultContent": "<strong>Key Points:</strong><br><br><strong>Questions:</strong>"},
+        {"id": "s4", "name": "Decisions", "type": "Table", "enabled": True, "order": 4, "required": False, "defaultContent": ["Decision", "Decision By", "Decision Date"]},
+        {"id": "s5", "name": "Action Items", "type": "Table", "enabled": True, "order": 5, "required": False, "defaultContent": ["Task", "Owner", "Priority", "Due Date", "Status"]}
+    ]
+
+
+def get_default_checklist_items():
+    return [
+        {"id": "c1", "title": "Verify Environment Variables", "description": "Check if production env vars are set correctly", "mandatory": True, "ownerRole": "DevOps", "evidenceRequired": False},
+        {"id": "c2", "title": "Run Security Scan", "description": "Ensure no high vulnerabilities via SonarQube", "mandatory": True, "ownerRole": "QA", "evidenceRequired": True},
+        {"id": "c3", "title": "Notify Client", "description": "Send deployment notification", "mandatory": False, "ownerRole": "Manager", "evidenceRequired": False},
+    ]
+
+
+def get_default_event_trigger():
+    return {
+        "enabled": False,
+        "eventType": "Birthday",
+        "autoGenerate": False,
+        "autoPublish": False,
+        "leadTimeDays": 0
+    }
+
+
+def get_default_publishing():
+    return {
+        "priority": "Normal",
+        "publishImmediately": True,
+        "effectiveDate": "",
+        "expiryDate": "",
+        "audience": {
+            "allEmployees": True,
+            "departments": [],
+            "locations": [],
+            "roles": []
+        },
+        "notificationBehavior": {
+            "requireAcknowledgement": False,
+            "allowComments": True,
+            "pinToNoticeBoard": False
+        }
+    }
+
+
+def build_variables():
+    return [
+        {"id": "v1", "name": "ClientName", "display_name": "Client Name", "type": "String", "category": "Client", "required": True, "default_value": "ABC Pvt Ltd", "description": "Displays client's official name"},
+        {"id": "v2", "name": "ProjectName", "display_name": "Project Name", "type": "String", "category": "Project", "required": True, "default_value": "Project Phoenix", "description": "The name of the project"},
+        {"id": "v3", "name": "EmployeeName", "display_name": "Employee Name", "type": "String", "category": "Employee", "required": True, "default_value": "John Doe", "description": "Assigned employee name"},
+        {"id": "v4", "name": "Employee", "display_name": "Employee", "type": "String", "category": "Employee Announcements", "required": True, "default_value": "Priya Sharma", "description": "Employee the announcement is about"},
+        {"id": "v5", "name": "Department", "display_name": "Department", "type": "String", "category": "Employee Announcements", "required": True, "default_value": "Engineering", "description": "Employee's department"},
+        {"id": "v6", "name": "Years", "display_name": "Years", "type": "Number", "category": "Employee Announcements", "required": False, "default_value": "5", "description": "Years of service, used for anniversaries"},
+        {"id": "v7", "name": "Photo", "display_name": "Photo", "type": "Image", "category": "Employee Announcements", "required": False, "default_value": "https://i.pravatar.cc/150?img=12", "description": "Employee's photo"},
+        {"id": "v8", "name": "Manager", "display_name": "Manager", "type": "String", "category": "Employee Announcements", "required": False, "default_value": "Rahul Verma", "description": "Employee's manager or reporting lead"},
+        {"id": "v9", "name": "Quote", "display_name": "Quote", "type": "String", "category": "Employee Announcements", "required": False, "default_value": "Success is the sum of small efforts, repeated day in and day out.", "description": "A congratulatory or motivational quote"},
+        {"id": "v10", "name": "InvoiceNumber", "display_name": "Invoice Number", "type": "String", "category": "Business Documents", "required": True, "default_value": "INV-2026-0142", "description": "Unique invoice or purchase order number"},
+        {"id": "v11", "name": "Amount", "display_name": "Amount", "type": "String", "category": "Business Documents", "required": True, "default_value": "$4,500.00", "description": "Formatted total amount due"},
+        {"id": "v12", "name": "DueDate", "display_name": "Due Date", "type": "Date", "category": "Business Documents", "required": False, "default_value": "2026-09-15", "description": "Payment or response due date"},
+        {"id": "v13", "name": "CandidateName", "display_name": "Candidate Name", "type": "String", "category": "Business Documents", "required": True, "default_value": "Aditi Rao", "description": "Name of the job candidate"},
+        {"id": "v14", "name": "JobTitle", "display_name": "Job Title", "type": "String", "category": "Business Documents", "required": True, "default_value": "Senior Software Engineer", "description": "Job title being offered or referenced"},
+    ]
+
+
+def build_templates():
+    templates = [
+        {
+            "id": "1",
+            "name": "Welcome Client",
+            "description": "Onboarding communication for new clients.",
+            "department": "Sales",
+            "category": "Client Communication",
+            "tags": ["onboarding", "welcome"],
+            "status": "Published",
+            "owner": "Sales Admin",
+            "created_by": "Sales Admin",
+            "updated_by": "Sales Admin",
+            "version": 1,
+            "language": "English",
+            "visibility": "Public",
+            "branding": {
+                "logoEnabled": True,
+                "signatureEnabled": True,
+                "footerEnabled": True,
+                "letterheadEnabled": False,
+                "companyDetailsEnabled": True
+            },
+            "channels": {
+                "email": {
+                    "enabled": True,
+                    "subject": "Welcome to Pixous Technologies, {{ClientName}}!",
+                    "content": "<p>Hello {{ClientName}},</p><p>Welcome to Pixous Technologies. We are thrilled to have you on board! Let's get started on {{ProjectName}}.</p>"
+                },
+                "whatsapp": {
+                    "enabled": True,
+                    "subject": "",
+                    "content": "Hi {{ClientName}}! 👋 Welcome to Pixous Technologies. We're excited to start working on {{ProjectName}} with you!"
+                }
+            },
+            "allowed_attachments": ["CompanyBrochure.pdf"],
+            "sections": [],
+            "checklistItems": [],
+            "signoffRole": "",
+            "publishing": get_default_publishing(),
+            "eventTrigger": get_default_event_trigger(),
+            "banner": ""
+        },
+        {
+            "id": "2",
+            "name": "Sprint Planning MOM",
+            "description": "Standardize your sprint planning meetings.",
+            "department": "Engineering",
+            "category": "Meeting Minutes",
+            "tags": ["sprint", "agile", "planning"],
+            "status": "Published",
+            "owner": "Scrum Master",
+            "created_by": "Scrum Master",
+            "updated_by": "Scrum Master",
+            "version": 1,
+            "language": "English",
+            "visibility": "Internal",
+            "branding": {
+                "logoEnabled": True,
+                "signatureEnabled": False,
+                "footerEnabled": True,
+                "letterheadEnabled": False,
+                "companyDetailsEnabled": False
+            },
+            "channels": {},
+            "allowed_attachments": [],
+            "sections": get_default_sections(),
+            "checklistItems": [],
+            "signoffRole": "",
+            "publishing": get_default_publishing(),
+            "eventTrigger": get_default_event_trigger(),
+            "banner": ""
+        }
+    ]
+
+    checklists = [
+        {
+            "name": "QA Checklist",
+            "description": "Pre-release quality assurance checklist for feature sign-off.",
+            "items": [
+                {"id": "qa1", "title": "Execute Regression Test Suite", "description": "Run the full automated regression suite and confirm no failures.", "mandatory": True, "ownerRole": "QA", "evidenceRequired": True},
+                {"id": "qa2", "title": "Verify Acceptance Criteria", "description": "Confirm each acceptance criterion from the ticket has been tested and passes.", "mandatory": True, "ownerRole": "QA", "evidenceRequired": False},
+                {"id": "qa3", "title": "Cross-Browser / Device Check", "description": "Validate the feature on supported browsers and device sizes.", "mandatory": False, "ownerRole": "QA", "evidenceRequired": False},
+                {"id": "qa4", "title": "Log Known Issues", "description": "Document any non-blocking bugs found, with severity and ticket links.", "mandatory": False, "ownerRole": "QA", "evidenceRequired": False},
+                {"id": "qa5", "title": "Sign Off for Release", "description": "QA lead confirms the build is ready to proceed to release.", "mandatory": True, "ownerRole": "Manager", "evidenceRequired": False},
+            ],
+        },
+        {
+            "name": "Deployment Checklist",
+            "description": "Standardized pre- and post-deployment checklist for production releases.",
+            "items": get_default_checklist_items(),
+        },
+    ]
+    for i, cl in enumerate(checklists, start=100):
+        templates.append({
+            "id": str(i),
+            "name": cl["name"],
+            "description": cl["description"],
+            "department": "Engineering",
+            "category": "Checklists",
+            "tags": ["checklist"],
+            "status": "Published",
+            "owner": "Admin",
+            "created_by": "Admin",
+            "updated_by": "Admin",
+            "version": 1,
+            "language": "English",
+            "visibility": "Internal",
+            "branding": {
+                "logoEnabled": True,
+                "signatureEnabled": False,
+                "footerEnabled": False,
+                "letterheadEnabled": False,
+                "companyDetailsEnabled": False
+            },
+            "channels": {},
+            "allowed_attachments": [],
+            "sections": [],
+            "checklistItems": cl["items"],
+            "signoffRole": "Manager",
+            "publishing": get_default_publishing(),
+            "eventTrigger": get_default_event_trigger(),
+            "banner": ""
+        })
+
+    hr_templates = [
+        {
+            "name": "Company Announcement", "category": "Announcements",
+            "description": "General-purpose template for company-wide news and updates.",
+            "email": "<p>Dear Team,</p><p>We'd like to share an important update with everyone at Pixous Technologies.</p><p><em>[Replace this paragraph with the details of your announcement.]</em></p><p>If you have any questions, please reach out to your manager or the HR team.</p><p>Thank you,<br>HR Team</p>",
+            "teams": "📢 **Company Announcement**\n\nWe have an update to share with the team. *(Replace this line with the announcement details.)* Reach out to HR with any questions.",
+        },
+        {
+            "name": "Holiday Notice (Diwali)", "category": "Announcements",
+            "description": "Office closure notice for the Diwali holiday.",
+            "email": "<p>Dear Team,</p><p>In celebration of Diwali, our offices will remain closed from <strong>[Start Date]</strong> to <strong>[End Date]</strong>. Regular working hours will resume on <strong>[Resume Date]</strong>.</p><p>We wish you and your family a joyous and prosperous Diwali!</p><p>Warm regards,<br>HR Team</p>",
+            "teams": "🪔 **Holiday Notice — Diwali**\n\nOur offices will be closed from **[Start Date]** to **[End Date]**. We resume normal hours on **[Resume Date]**. Wishing everyone a very Happy Diwali! 🎉",
+        },
+        {
+            "name": "Office Maintenance", "category": "Announcements",
+            "description": "Notice for scheduled facility or building maintenance work.",
+            "email": "<p>Dear Team,</p><p>Please be informed that scheduled maintenance work will take place at the office on <strong>[Date]</strong> between <strong>[Start Time]</strong> and <strong>[End Time]</strong>.</p><p>During this window, you may experience temporary disruption to <strong>[affected area/utility, e.g. air conditioning, elevators, Wi-Fi]</strong>. We appreciate your patience.</p><p>For urgent concerns during the maintenance window, please contact Facilities at <strong>[Contact Info]</strong>.</p><p>Regards,<br>Facilities Team</p>",
+            "teams": "🛠️ **Office Maintenance Notice**\n\nScheduled maintenance on **[Date]**, **[Start Time]–[End Time]**. Expect brief disruption to **[affected area]**. Contact Facilities at **[Contact Info]** for urgent issues.",
+        },
+        {
+            "name": "WFH Policy", "category": "Policies",
+            "description": "Guidelines and expectations for employees working from home.",
+            "email": "<p>Dear Team,</p><p>This notice outlines our Work-From-Home (WFH) policy:</p><ul><li><strong>Eligibility:</strong> Applicable to roles approved by your reporting manager.</li><li><strong>Availability:</strong> Be reachable during standard working hours (<strong>[e.g. 9:30 AM – 6:30 PM]</strong>) via email, chat, and calls.</li><li><strong>Equipment:</strong> Ensure a stable internet connection and a secure, company-approved device.</li><li><strong>Meetings:</strong> Keep your camera on for scheduled team meetings unless stated otherwise.</li><li><strong>Approval:</strong> Inform your manager in advance if working from a location other than your registered address.</li></ul><p>Please acknowledge that you have read and understood this policy.</p><p>Regards,<br>HR Team</p>",
+            "teams": "🏠 **WFH Policy Update**\n\nKey points: be reachable during working hours, use a secure company-approved device, camera on for team meetings, and inform your manager if working from a different location. Please review and acknowledge.",
+        },
+        {
+            "name": "Leave Policy", "category": "Policies",
+            "description": "Overview of leave types, entitlements, and the application process.",
+            "email": "<p>Dear Team,</p><p>Here's a summary of our leave policy:</p><ul><li><strong>Leave Types:</strong> Casual Leave, Sick Leave, Earned/Privilege Leave, and Public Holidays as per the annual calendar.</li><li><strong>Application:</strong> Apply through the HR portal at least <strong>[X days]</strong> in advance for planned leave; sick leave may be applied on the day, with manager notified directly.</li><li><strong>Approval:</strong> All leave requires your reporting manager's approval before it is considered confirmed.</li><li><strong>Carry Forward:</strong> Unused Earned Leave can be carried forward up to <strong>[X days]</strong> per the current HR guidelines.</li></ul><p>Please acknowledge that you have read and understood this policy. For questions, reach out to HR.</p><p>Regards,<br>HR Team</p>",
+            "teams": "📋 **Leave Policy**\n\nCovers Casual, Sick, and Earned Leave, how to apply via the HR portal, manager approval, and carry-forward rules. Please review and acknowledge — questions go to HR.",
+        },
+        {
+            "name": "Security Policy", "category": "Policies",
+            "description": "Baseline information security practices all employees must follow.",
+            "email": "<p>Dear Team,</p><p>To keep our systems and data secure, please follow these practices:</p><ul><li><strong>Passwords:</strong> Use strong, unique passwords and enable multi-factor authentication wherever available.</li><li><strong>Devices:</strong> Lock your screen when away from your desk; only use company-approved devices for work data.</li><li><strong>Email:</strong> Do not click links or download attachments from unknown or unexpected senders. Report suspicious emails to the Security team immediately.</li><li><strong>Data Handling:</strong> Do not share confidential company or client information outside approved channels.</li></ul><p>Please acknowledge that you have read and understood this policy.</p><p>Regards,<br>IT Security Team</p>",
+            "teams": "🔒 **Security Policy**\n\nUse strong passwords with MFA, lock your screen when away, avoid unknown links/attachments, and never share confidential data outside approved channels. Report anything suspicious to IT Security. Please acknowledge.",
+        },
+        {
+            "name": "Annual Townhall", "category": "Events",
+            "description": "Invitation and agenda for the company's annual townhall meeting.",
+            "email": "<p>Dear Team,</p><p>You're invited to our Annual Townhall!</p><ul><li><strong>Date:</strong> [Date]</li><li><strong>Time:</strong> [Time]</li><li><strong>Venue:</strong> [Venue / Video Link]</li></ul><p>Agenda highlights include a year-in-review, key business updates, and an open Q&A session with leadership. We look forward to seeing you there!</p><p>Regards,<br>HR Team</p>",
+            "teams": "🎤 **Annual Townhall — Save the Date!**\n\n📅 [Date]  🕐 [Time]  📍 [Venue / Video Link]\n\nYear-in-review, business updates, and live Q&A with leadership. See you there!",
+        },
+        {
+            "name": "Festival Celebration", "category": "Events",
+            "description": "Invitation to an in-office festival celebration event.",
+            "email": "<p>Dear Team,</p><p>Let's celebrate together! Join us for our festival celebration:</p><ul><li><strong>Date:</strong> [Date]</li><li><strong>Time:</strong> [Time]</li><li><strong>Venue:</strong> [Venue]</li></ul><p>Expect food, music, and fun activities for everyone. Feel free to come in festive attire!</p><p>Regards,<br>HR Team</p>",
+            "teams": "🎉 **Festival Celebration!**\n\n📅 [Date]  🕐 [Time]  📍 [Venue]\n\nFood, music, and fun for everyone — come dressed in your festive best!",
+        },
+        {
+            "name": "New Hiring", "category": "Recruitment",
+            "description": "Internal announcement for an open position within the company.",
+            "email": "<p>Dear Team,</p><p>We're hiring for the role of <strong>[Job Title]</strong> in the <strong>[Department]</strong> team!</p><p><strong>Key Requirements:</strong> [Skills / Experience]</p><p>If you know someone who would be a great fit, please share this opening or have them apply through <strong>[Application Link/Process]</strong>.</p><p>Regards,<br>Talent Acquisition Team</p>",
+            "teams": "💼 **We're Hiring: [Job Title]**\n\nTeam: [Department] · Requirements: [Skills/Experience]\n\nKnow someone great for this role? Share this or point them to [Application Link].",
+        },
+        {
+            "name": "Internal Referral", "category": "Recruitment",
+            "description": "Reminder of the employee referral program and its rewards.",
+            "email": "<p>Dear Team,</p><p>Know someone great who'd be a good fit at Pixous Technologies? Refer them through our Employee Referral Program!</p><ul><li><strong>Eligible Roles:</strong> All open positions listed on the careers page.</li><li><strong>Referral Bonus:</strong> [Amount], paid after the referred candidate completes [X months] with the company.</li><li><strong>How to Refer:</strong> Submit their details via [Referral Form/Process].</li></ul><p>Thank you for helping us grow our team!</p><p>Regards,<br>Talent Acquisition Team</p>",
+            "teams": "🤝 **Refer & Earn**\n\nRefer a great candidate for any open role and earn [Amount] once they complete [X months] with us. Submit referrals via [Referral Form].",
+        },
+    ]
+    for i, hr in enumerate(hr_templates, start=200):
+        pub = get_default_publishing()
+        if hr["name"] == "Company Announcement" or hr["name"] == "Holiday Notice (Diwali)":
+            pub["notificationBehavior"]["pinToNoticeBoard"] = True
+            pub["priority"] = "High"
+        if "Policy" in hr["name"]:
+            pub["notificationBehavior"]["requireAcknowledgement"] = True
+
+        templates.append({
+            "id": str(i),
+            "name": hr["name"],
+            "description": hr["description"],
+            "department": "HR",
+            "category": hr["category"],
+            "tags": ["hr"],
+            "status": "Published",
+            "owner": "HR Admin",
+            "created_by": "HR Admin",
+            "updated_by": "HR Admin",
+            "version": 1,
+            "language": "English",
+            "visibility": "Internal",
+            "branding": {
+                "logoEnabled": True,
+                "signatureEnabled": True,
+                "footerEnabled": True,
+                "letterheadEnabled": False,
+                "companyDetailsEnabled": False
+            },
+            "channels": {
+                "email": {
+                    "enabled": True,
+                    "subject": hr["name"],
+                    "content": hr["email"]
+                },
+                "teams": {
+                    "enabled": True,
+                    "subject": "",
+                    "content": hr["teams"]
+                }
+            },
+            "allowed_attachments": [],
+            "sections": [],
+            "checklistItems": [],
+            "signoffRole": "",
+            "publishing": pub,
+            "eventTrigger": get_default_event_trigger(),
+            "banner": ""
+        })
+
+    employee_event_templates = [
+        {"name": "Birthday", "eventType": "Birthday", "leadTimeDays": 0, "autoPublish": True,
+         "content": "<p>🎂 Join us in wishing <strong>{{Employee}}</strong> from {{Department}} a very Happy Birthday!</p><p>\"{{Quote}}\"</p>"},
+        {"name": "Anniversary", "eventType": "Anniversary", "leadTimeDays": 1, "autoPublish": True,
+         "content": "<p>🎉 Congratulations to <strong>{{Employee}}</strong> on completing {{Years}} years with us in {{Department}}!</p><p>\"{{Quote}}\"</p>"},
+        {"name": "Promotion", "eventType": "Promotion", "leadTimeDays": 0, "autoPublish": False,
+         "content": "<p>🚀 Please join us in congratulating <strong>{{Employee}}</strong> on their well-deserved promotion in {{Department}}, under the guidance of {{Manager}}.</p>"},
+        {"name": "New Joiner", "eventType": "New Joiner", "leadTimeDays": 0, "autoPublish": False,
+         "content": "<p>👋 Please welcome <strong>{{Employee}}</strong> who has joined {{Department}}, reporting to {{Manager}}.</p>"},
+        {"name": "Farewell", "eventType": "Farewell", "leadTimeDays": 2, "autoPublish": False,
+         "content": "<p>👋 It's time to bid farewell to <strong>{{Employee}}</strong> from {{Department}} after {{Years}} years with us. We wish them the very best!</p>"},
+        {"name": "Certification", "eventType": "Certification", "leadTimeDays": 0, "autoPublish": True,
+         "content": "<p>🎓 Congratulations to <strong>{{Employee}}</strong> from {{Department}} on achieving a new certification!</p>"},
+        {"name": "Award", "eventType": "Award", "leadTimeDays": 0, "autoPublish": False,
+         "content": "<p>🏆 Congratulations to <strong>{{Employee}}</strong> from {{Department}} on receiving this month's award, recognized by {{Manager}}.</p>"},
+        {"name": "Wedding", "eventType": "Wedding", "leadTimeDays": 3, "autoPublish": False,
+         "content": "<p>💍 Please join us in congratulating <strong>{{Employee}}</strong> from {{Department}} on their wedding!</p>"},
+        {"name": "Baby", "eventType": "Baby", "leadTimeDays": 0, "autoPublish": False,
+         "content": "<p>👶 Congratulations to <strong>{{Employee}}</strong> from {{Department}} on the newest addition to their family!</p>"},
+        {"name": "Achievement", "eventType": "Achievement", "leadTimeDays": 0, "autoPublish": True,
+         "content": "<p>⭐ Celebrating <strong>{{Employee}}</strong> from {{Department}} for their outstanding achievement.</p><p>\"{{Quote}}\"</p>"},
+    ]
+    for i, ev in enumerate(employee_event_templates, start=300):
+        pub = get_default_publishing()
+        pub["notificationBehavior"]["allowComments"] = True
+        pub["notificationBehavior"]["pinToNoticeBoard"] = ev["eventType"] in ["Birthday", "Anniversary", "Award", "Achievement"]
+
+        templates.append({
+            "id": str(i),
+            "name": ev["name"],
+            "description": f"Auto-generated employee announcement for {ev['name']} events.",
+            "department": "HR",
+            "category": "Employee Announcements",
+            "tags": ["employee-announcement", "event-driven"],
+            "status": "Published",
+            "owner": "HR Admin",
+            "created_by": "HR Admin",
+            "updated_by": "HR Admin",
+            "version": 1,
+            "language": "English",
+            "visibility": "Internal",
+            "branding": {
+                "logoEnabled": True,
+                "signatureEnabled": False,
+                "footerEnabled": True,
+                "letterheadEnabled": False,
+                "companyDetailsEnabled": False
+            },
+            "channels": {
+                "email": {"enabled": True, "subject": f"{ev['name']} - {{{{Employee}}}}", "content": ev["content"]},
+                "teams": {"enabled": True, "subject": "", "content": ev["content"]}
+            },
+            "allowed_attachments": [],
+            "sections": [],
+            "checklistItems": [],
+            "signoffRole": "",
+            "publishing": pub,
+            "eventTrigger": {
+                "enabled": True,
+                "eventType": ev["eventType"],
+                "autoGenerate": True,
+                "autoPublish": ev["autoPublish"],
+                "leadTimeDays": ev["leadTimeDays"]
+            },
+            "banner": ""
+        })
+
+    notice_templates = [
+        {"name": "Phishing Awareness Alert", "category": "Security", "department": "IT", "priority": "Critical",
+         "requireAcknowledgement": True, "startDate": "2026-08-01", "endDate": "2026-08-31", "attachments": ["SecurityGuidelines.pdf"],
+         "content": "<p>We've seen an increase in phishing attempts targeting employee inboxes. Do not click links or download attachments from unknown senders, and report suspicious emails to the Security team immediately.</p>"},
+        {"name": "Scheduled Server Maintenance", "category": "Infrastructure", "department": "IT", "priority": "High",
+         "requireAcknowledgement": False, "startDate": "2026-08-10", "endDate": "2026-08-11", "attachments": [],
+         "content": "<p>Core infrastructure will undergo scheduled maintenance this weekend. Expect intermittent downtime for internal tools between 11 PM and 3 AM.</p>"},
+        {"name": "New IT Helpdesk Portal", "category": "IT", "department": "IT", "priority": "Normal",
+         "requireAcknowledgement": False, "startDate": "2026-08-05", "endDate": "2026-09-05", "attachments": [],
+         "content": "<p>All IT support requests should now be raised through the new Helpdesk Portal instead of email. This gives you real-time ticket tracking and faster response times.</p>"},
+        {"name": "Updated Code of Conduct", "category": "HR", "department": "HR", "priority": "High",
+         "requireAcknowledgement": True, "startDate": "2026-08-01", "endDate": "", "attachments": ["CodeOfConduct.pdf"],
+         "content": "<p>The Employee Code of Conduct has been updated for 2026. Please review the attached document and confirm your acknowledgement.</p>"},
+        {"name": "Cafeteria Renovation Notice", "category": "Facilities", "department": "Facilities", "priority": "Normal",
+         "requireAcknowledgement": False, "startDate": "2026-08-15", "endDate": "2026-09-15", "attachments": [],
+         "content": "<p>The main cafeteria will be under renovation. A temporary pantry setup will be available on the 3rd floor during this period.</p>"},
+        {"name": "Project Phoenix Go-Live", "category": "Projects", "department": "Engineering", "priority": "High",
+         "requireAcknowledgement": False, "startDate": "2026-08-20", "endDate": "2026-08-27", "attachments": [],
+         "content": "<p>Project Phoenix goes live next week. All teams should freeze non-critical deployments during the release window.</p>"},
+        {"name": "Quarterly Town Hall Recap", "category": "Management", "department": "Management", "priority": "Normal",
+         "requireAcknowledgement": False, "startDate": "2026-08-03", "endDate": "", "attachments": ["TownHallSlides.pdf"],
+         "content": "<p>Thank you to everyone who joined this quarter's town hall. Slides and a recording are attached for anyone who missed it.</p>"},
+        {"name": "Support Ticketing SLA Update", "category": "Support", "department": "IT", "priority": "Normal",
+         "requireAcknowledgement": False, "startDate": "2026-08-01", "endDate": "", "attachments": [],
+         "content": "<p>Support ticket SLAs have been updated: Critical issues are now targeted for a 2-hour first response instead of 4 hours.</p>"},
+    ]
+    for i, nb in enumerate(notice_templates, start=400):
+        pub = get_default_publishing()
+        pub["priority"] = nb["priority"]
+        pub["publishImmediately"] = not bool(nb["startDate"])
+        pub["effectiveDate"] = nb["startDate"]
+        pub["expiryDate"] = nb["endDate"]
+        pub["notificationBehavior"]["requireAcknowledgement"] = nb["requireAcknowledgement"]
+        pub["notificationBehavior"]["pinToNoticeBoard"] = True
+
+        templates.append({
+            "id": str(i),
+            "name": nb["name"],
+            "description": f"Company notice under {nb['category']}.",
+            "department": nb["department"],
+            "category": nb["category"],
+            "tags": ["notice-board", nb["category"].lower()],
+            "status": "Published",
+            "owner": "Notice Board Admin",
+            "created_by": "Notice Board Admin",
+            "updated_by": "Notice Board Admin",
+            "version": 1,
+            "language": "English",
+            "visibility": "Internal",
+            "branding": {
+                "logoEnabled": True,
+                "signatureEnabled": False,
+                "footerEnabled": True,
+                "letterheadEnabled": False,
+                "companyDetailsEnabled": False
+            },
+            "channels": {
+                "notice": {"enabled": True, "subject": "", "content": nb["content"]}
+            },
+            "allowed_attachments": nb["attachments"],
+            "sections": [],
+            "checklistItems": [],
+            "signoffRole": "",
+            "publishing": pub,
+            "eventTrigger": get_default_event_trigger(),
+            "banner": f"https://picsum.photos/seed/{nb['category'].lower()}/900/240"
+        })
+
+    # Business Documents
+    business_documents = [
+        {
+            "name": "Invoice",
+            "department": "Finance",
+            "owner": "Finance Admin",
+            "tags": ["invoice", "billing"],
+            "subject": "Invoice {{InvoiceNumber}} from Pixous Technologies",
+            "content": (
+                "<p>Dear {{ClientName}},</p>"
+                "<p>Please find your invoice details below.</p>"
+                "<table style='width:100%;border-collapse:collapse'>"
+                "<tr><td><strong>Invoice Number</strong></td><td>{{InvoiceNumber}}</td></tr>"
+                "<tr><td><strong>Project</strong></td><td>{{ProjectName}}</td></tr>"
+                "<tr><td><strong>Amount Due</strong></td><td>{{Amount}}</td></tr>"
+                "<tr><td><strong>Due Date</strong></td><td>{{DueDate}}</td></tr>"
+                "</table>"
+                "<p>Thank you for your business.</p>"
+            ),
+        },
+        {
+            "name": "Business Proposal",
+            "department": "Sales",
+            "owner": "Sales Admin",
+            "tags": ["proposal", "sales"],
+            "subject": "Proposal: {{ProjectName}} for {{ClientName}}",
+            "content": (
+                "<p>Dear {{ClientName}},</p>"
+                "<p>Thank you for the opportunity to propose a solution for {{ProjectName}}.</p>"
+                "<p><strong>Scope:</strong> Outline of deliverables and milestones.</p>"
+                "<p><strong>Timeline:</strong> Estimated project duration and key dates.</p>"
+                "<p><strong>Investment:</strong> {{Amount}}</p>"
+                "<p>We look forward to partnering with you.</p>"
+            ),
+        },
+        {
+            "name": "Non-Disclosure Agreement (NDA)",
+            "department": "Legal",
+            "owner": "Legal Admin",
+            "tags": ["nda", "legal"],
+            "subject": "Mutual NDA — {{ClientName}} & Pixous Technologies",
+            "content": (
+                "<p>This Non-Disclosure Agreement is entered into between Pixous Technologies and {{ClientName}}.</p>"
+                "<p>Both parties agree to keep confidential information related to {{ProjectName}} private and to use "
+                "it solely for the purposes of evaluating and conducting the engagement.</p>"
+                "<p>This agreement remains in effect until {{DueDate}} unless renewed by mutual consent.</p>"
+            ),
+        },
+        {
+            "name": "Offer Letter",
+            "department": "HR",
+            "owner": "HR Admin",
+            "tags": ["offer-letter", "hr"],
+            "subject": "Offer of Employment — {{JobTitle}}",
+            "content": (
+                "<p>Dear {{CandidateName}},</p>"
+                "<p>We are delighted to offer you the position of <strong>{{JobTitle}}</strong> at Pixous Technologies.</p>"
+                "<p>Please confirm your acceptance by {{DueDate}}. We look forward to welcoming you to the team.</p>"
+            ),
+        },
+        {
+            "name": "Purchase Order",
+            "department": "Finance",
+            "owner": "Finance Admin",
+            "tags": ["purchase-order", "procurement"],
+            "subject": "Purchase Order {{InvoiceNumber}}",
+            "content": (
+                "<p>Purchase Order <strong>{{InvoiceNumber}}</strong> issued to {{ClientName}} for {{ProjectName}}.</p>"
+                "<table style='width:100%;border-collapse:collapse'>"
+                "<tr><td><strong>Total Amount</strong></td><td>{{Amount}}</td></tr>"
+                "<tr><td><strong>Delivery Due</strong></td><td>{{DueDate}}</td></tr>"
+                "</table>"
+            ),
+        },
+    ]
+    for i, bd in enumerate(business_documents, start=500):
+        templates.append({
+            "id": str(i),
+            "name": bd["name"],
+            "description": f"{bd['name']} template for {bd['department']} use.",
+            "department": bd["department"],
+            "category": "Business Documents",
+            "tags": bd["tags"],
+            "status": "Published",
+            "owner": bd["owner"],
+            "created_by": bd["owner"],
+            "updated_by": bd["owner"],
+            "version": 1,
+            "language": "English",
+            "visibility": "Internal",
+            "branding": {
+                "logoEnabled": True,
+                "signatureEnabled": True,
+                "footerEnabled": True,
+                "letterheadEnabled": True,
+                "companyDetailsEnabled": True
+            },
+            "channels": {
+                "email": {"enabled": True, "subject": bd["subject"], "content": bd["content"]}
+            },
+            "allowed_attachments": [],
+            "sections": [],
+            "checklistItems": [],
+            "signoffRole": "",
+            "publishing": get_default_publishing(),
+            "eventTrigger": get_default_event_trigger(),
+            "banner": ""
+        })
+
+    # Additional Client Communication templates
+    client_comms = [
+        {
+            "name": "Project Status Update",
+            "tags": ["status-update", "client"],
+            "subject": "{{ProjectName}} — Weekly Status Update",
+            "email": "<p>Hi {{ClientName}},</p><p>Here's a quick update on {{ProjectName}} this week: progress remains on track, with upcoming milestones in focus.</p>",
+            "whatsapp": "Hi {{ClientName}}! Quick update on {{ProjectName}} — we're on track this week. Details in your email inbox 📩",
+        },
+        {
+            "name": "Meeting Follow-up",
+            "tags": ["follow-up", "client"],
+            "subject": "Follow-up: Our Discussion on {{ProjectName}}",
+            "email": "<p>Hi {{ClientName}},</p><p>Thank you for the discussion on {{ProjectName}}. As agreed, here's a summary of the key action items and next steps.</p>",
+            "whatsapp": "",
+        },
+        {
+            "name": "Invoice Payment Reminder",
+            "tags": ["reminder", "billing"],
+            "subject": "Payment Reminder — Invoice {{InvoiceNumber}}",
+            "email": "<p>Hi {{ClientName}},</p><p>This is a friendly reminder that Invoice {{InvoiceNumber}} for {{Amount}} is due on {{DueDate}}. Please let us know if you have any questions.</p>",
+            "whatsapp": "",
+        },
+        {
+            "name": "Project Completion & Handover",
+            "tags": ["handover", "closure"],
+            "subject": "{{ProjectName}} — Successfully Delivered!",
+            "email": "<p>Hi {{ClientName}},</p><p>We're happy to confirm that {{ProjectName}} has been completed and handed over. Thank you for trusting us with this engagement!</p>",
+            "whatsapp": "Great news {{ClientName}}! {{ProjectName}} is complete and handed over. Thank you for working with us! 🎉",
+        },
+    ]
+    for i, cc in enumerate(client_comms, start=600):
+        channels = {"email": {"enabled": True, "subject": cc["subject"], "content": cc["email"]}}
+        if cc["whatsapp"]:
+            channels["whatsapp"] = {"enabled": True, "subject": "", "content": cc["whatsapp"]}
+        templates.append({
+            "id": str(i),
+            "name": cc["name"],
+            "description": f"{cc['name']} template for client communication.",
+            "department": "Sales",
+            "category": "Client Communication",
+            "tags": cc["tags"],
+            "status": "Published",
+            "owner": "Sales Admin",
+            "created_by": "Sales Admin",
+            "updated_by": "Sales Admin",
+            "version": 1,
+            "language": "English",
+            "visibility": "Public",
+            "branding": {
+                "logoEnabled": True,
+                "signatureEnabled": True,
+                "footerEnabled": True,
+                "letterheadEnabled": False,
+                "companyDetailsEnabled": True
+            },
+            "channels": channels,
+            "allowed_attachments": [],
+            "sections": [],
+            "checklistItems": [],
+            "signoffRole": "",
+            "publishing": get_default_publishing(),
+            "eventTrigger": get_default_event_trigger(),
+            "banner": ""
+        })
+
+    # Additional Meeting Minutes templates
+    meeting_minutes = [
+        {
+            "name": "Client Review Meeting",
+            "tags": ["client", "review"],
+            "sections": [
+                {"id": "m1", "name": "Attendees", "type": "PeoplePicker", "enabled": True, "order": 1, "required": True, "defaultContent": ["Name", "Role", "Organization", "Attendance"]},
+                {"id": "m2", "name": "Project Status", "type": "RichText", "enabled": True, "order": 2, "required": True, "defaultContent": "<strong>Overall Status:</strong> "},
+                {"id": "m3", "name": "Client Feedback", "type": "RichText", "enabled": True, "order": 3, "required": False, "defaultContent": ""},
+                {"id": "m4", "name": "Open Issues", "type": "Table", "enabled": True, "order": 4, "required": False, "defaultContent": ["Issue", "Owner", "Priority", "Status"]},
+                {"id": "m5", "name": "Next Steps", "type": "RichText", "enabled": True, "order": 5, "required": False, "defaultContent": ""},
+            ],
+        },
+        {
+            "name": "Board Meeting Minutes",
+            "tags": ["board", "governance"],
+            "sections": [
+                {"id": "m1", "name": "Attendees", "type": "PeoplePicker", "enabled": True, "order": 1, "required": True, "defaultContent": ["Name", "Role", "Organization", "Attendance"]},
+                {"id": "m2", "name": "Previous Minutes Review", "type": "RichText", "enabled": True, "order": 2, "required": False, "defaultContent": ""},
+                {"id": "m3", "name": "Agenda Items", "type": "RichText", "enabled": True, "order": 3, "required": True, "defaultContent": "1. \n2. \n3. "},
+                {"id": "m4", "name": "Resolutions", "type": "Table", "enabled": True, "order": 4, "required": False, "defaultContent": ["Resolution", "Proposed By", "Votes", "Outcome"]},
+                {"id": "m5", "name": "Action Items", "type": "Table", "enabled": True, "order": 5, "required": False, "defaultContent": ["Task", "Owner", "Priority", "Due Date", "Status"]},
+            ],
+        },
+        {
+            "name": "Daily Standup Notes",
+            "tags": ["standup", "agile"],
+            "sections": [
+                {"id": "m1", "name": "Attendees", "type": "PeoplePicker", "enabled": True, "order": 1, "required": False, "defaultContent": ["Name", "Role", "Organization", "Attendance"]},
+                {"id": "m2", "name": "Yesterday's Progress", "type": "RichText", "enabled": True, "order": 2, "required": True, "defaultContent": ""},
+                {"id": "m3", "name": "Today's Plan", "type": "RichText", "enabled": True, "order": 3, "required": True, "defaultContent": ""},
+                {"id": "m4", "name": "Blockers", "type": "RichText", "enabled": True, "order": 4, "required": False, "defaultContent": "<i>None reported</i>"},
+            ],
+        },
+        {
+            "name": "Retrospective Meeting",
+            "tags": ["retrospective", "agile"],
+            "sections": [
+                {"id": "m1", "name": "Attendees", "type": "PeoplePicker", "enabled": True, "order": 1, "required": False, "defaultContent": ["Name", "Role", "Organization", "Attendance"]},
+                {"id": "m2", "name": "What Went Well", "type": "RichText", "enabled": True, "order": 2, "required": True, "defaultContent": ""},
+                {"id": "m3", "name": "What Didn't Go Well", "type": "RichText", "enabled": True, "order": 3, "required": True, "defaultContent": ""},
+                {"id": "m4", "name": "Action Items", "type": "Table", "enabled": True, "order": 4, "required": False, "defaultContent": ["Task", "Owner", "Priority", "Due Date", "Status"]},
+            ],
+        },
+    ]
+    for i, mm in enumerate(meeting_minutes, start=700):
+        templates.append({
+            "id": str(i),
+            "name": mm["name"],
+            "description": f"{mm['name']} template for structured meeting notes.",
+            "department": "Engineering",
+            "category": "Meeting Minutes",
+            "tags": mm["tags"],
+            "status": "Published",
+            "owner": "Admin",
+            "created_by": "Admin",
+            "updated_by": "Admin",
+            "version": 1,
+            "language": "English",
+            "visibility": "Internal",
+            "branding": {
+                "logoEnabled": True,
+                "signatureEnabled": False,
+                "footerEnabled": True,
+                "letterheadEnabled": False,
+                "companyDetailsEnabled": False
+            },
+            "channels": {},
+            "allowed_attachments": [],
+            "sections": mm["sections"],
+            "checklistItems": [],
+            "signoffRole": "",
+            "publishing": get_default_publishing(),
+            "eventTrigger": get_default_event_trigger(),
+            "banner": ""
+        })
+
+    return templates
+
+
+DEMO_USERS = [
+    {"email": "admin@pixoustech.com", "name": "Admin User", "role": "Admin", "password": "password123"},
+    {"email": "editor@pixoustech.com", "name": "HR Editor", "role": "Editor", "password": "password123"},
+    {"email": "employee@pixoustech.com", "name": "Sample Employee", "role": "Employee", "password": "password123"},
+]
+
+
+def seed_if_empty(db: Session):
+    if db.query(TemplateRecord).count() == 0:
+        for t in build_templates():
+            db.add(TemplateRecord(id=t["id"], payload=t))
+
+    if db.query(VariableRecord).count() == 0:
+        for v in build_variables():
+            db.add(VariableRecord(id=v["id"], payload=v))
+
+    if db.query(UserRecord).count() == 0:
+        for u in DEMO_USERS:
+            db.add(UserRecord(
+                id=str(uuid.uuid4()),
+                email=u["email"],
+                name=u["name"],
+                role=u["role"],
+                hashed_password=hash_password(u["password"])
+            ))
+
+    if db.query(ConfigRecord).filter(ConfigRecord.key == MASTER_DATA_KEY).first() is None:
+        db.add(ConfigRecord(key=MASTER_DATA_KEY, payload=build_master_data()))
+
+    db.commit()

@@ -1,0 +1,39 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+backend/venv/
+backend/app.db
+backend/*.db
+*.db
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.auth/
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
+
+# Logs
+*.log
+backend_run.log
+vite_run.log
+preview_run.log
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
