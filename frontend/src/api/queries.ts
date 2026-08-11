@@ -65,6 +65,25 @@ export const useLogin = () => {
   });
 };
 
+export const useUsers = () => {
+  return useQuery({
+    queryKey: ['users'],
+    queryFn: async () => {
+      const { data } = await apiClient.get<User[]>('/users');
+      return data;
+    },
+  });
+};
+
+export const useResetPassword = () => {
+  return useMutation({
+    mutationFn: async ({ userId, password }: { userId: string; password?: string }) => {
+      const { data } = await apiClient.post<{ id: string; email: string; password: string }>(`/users/${userId}/reset-password`, { password: password || null });
+      return data;
+    },
+  });
+};
+
 export const useCreateTemplate = () => {
   const queryClient = useQueryClient();
   return useMutation({
@@ -101,6 +120,61 @@ export const useDeleteTemplate = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates'] });
+    },
+  });
+};
+
+export const useApprovals = () => {
+  return useQuery({
+    queryKey: ['approvals'],
+    queryFn: async () => {
+      const { data } = await apiClient.get<Template[]>('/approvals');
+      return data;
+    },
+  });
+};
+
+export const useSubmitForApproval = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await apiClient.post<Template>(`/templates/${id}/submit-for-approval`);
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      queryClient.invalidateQueries({ queryKey: ['template', data.id] });
+      queryClient.invalidateQueries({ queryKey: ['approvals'] });
+    },
+  });
+};
+
+export const useApproveTemplate = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await apiClient.post<Template>(`/templates/${id}/approve`);
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      queryClient.invalidateQueries({ queryKey: ['template', data.id] });
+      queryClient.invalidateQueries({ queryKey: ['approvals'] });
+    },
+  });
+};
+
+export const useRejectTemplate = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await apiClient.post<Template>(`/templates/${id}/reject`);
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      queryClient.invalidateQueries({ queryKey: ['template', data.id] });
+      queryClient.invalidateQueries({ queryKey: ['approvals'] });
     },
   });
 };

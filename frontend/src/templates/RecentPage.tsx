@@ -4,13 +4,15 @@ import { Clock } from 'lucide-react';
 import { useRecentStore } from '../store/recentStore';
 import TemplateCard from '../components/TemplateCard';
 import EmptyState from '../components/EmptyState';
+import DataError from '../components/DataError';
 
 const RecentPage = () => {
   const navigate = useNavigate();
-  const { data: templates, isLoading } = useTemplates();
+  const { data: templates, isLoading, isError } = useTemplates();
   const { recentIds } = useRecentStore();
 
   if (isLoading) return <div>Loading recent templates...</div>;
+  if (isError) return <DataError message="Couldn't load recent templates. Check that the server is running and try again." />;
 
   const recent = recentIds
     .map((id) => templates?.find((t) => t.id === id))

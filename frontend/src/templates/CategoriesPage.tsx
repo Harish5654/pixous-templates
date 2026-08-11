@@ -1,13 +1,15 @@
 import { useNavigate } from 'react-router-dom';
 import { useCategories, useTemplates } from '../api/queries';
 import { Folder } from 'lucide-react';
+import DataError from '../components/DataError';
 
 const CategoriesPage = () => {
   const navigate = useNavigate();
-  const { data: categories, isLoading } = useCategories();
+  const { data: categories, isLoading, isError } = useCategories();
   const { data: templates } = useTemplates();
 
   if (isLoading) return <div>Loading categories...</div>;
+  if (isError) return <DataError message="Couldn't load categories. Check that the server is running and try again." />;
 
   return (
     <div>

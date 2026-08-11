@@ -5,10 +5,11 @@ import { useAuthStore } from '../store/authStore';
 import { Plus, Folder, Search, FileText } from 'lucide-react';
 import TemplateCard from '../components/TemplateCard';
 import EmptyState from '../components/EmptyState';
+import DataError from '../components/DataError';
 
 const TemplatePage = () => {
   const navigate = useNavigate();
-  const { data: templates, isLoading } = useTemplates();
+  const { data: templates, isLoading, isError } = useTemplates();
   const { data: categories } = useCategories();
   const [searchParams, setSearchParams] = useSearchParams();
   const currentUser = useAuthStore((s) => s.user);
@@ -52,11 +53,12 @@ const TemplatePage = () => {
   }, [templates, selectedCategory, query]);
 
   if (isLoading) return <div>Loading templates...</div>;
+  if (isError) return <DataError message="Couldn't load the template library. Check that the server is running and try again." />;
 
   return (
-    <div style={{ display: 'flex', height: '100%', gap: '24px' }}>
+    <div className="template-browser" style={{ display: 'flex', height: '100%', gap: '24px' }}>
       {/* Folder sidebar */}
-      <div style={{ width: '220px', flexShrink: 0 }}>
+      <div className="template-browser-sidebar" style={{ width: '220px', flexShrink: 0 }}>
         <h2 style={{ marginBottom: '16px' }}>Categories</h2>
 
         <ul style={{ listStyle: 'none' }}>

@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { X, Copy, FileDown, FileText, Printer, Check } from 'lucide-react';
+import DOMPurify from 'dompurify';
 import type { Template, SectionData, ChecklistItem } from '../types/template';
 import { useVariables } from '../api/queries';
 
@@ -82,7 +83,7 @@ const buildSectionContentHtml = (section: SectionData): string => {
     return buildTableHtml(columns);
   }
   const content = typeof section.defaultContent === 'string' ? section.defaultContent : '';
-  return content ? `<div>${content}</div>` : '<p style="color:#999;font-style:italic;margin:0;">To be filled in during the meeting.</p>';
+  return content ? `<div>${DOMPurify.sanitize(content)}</div>` : '<p style="color:#999;font-style:italic;margin:0;">To be filled in during the meeting.</p>';
 };
 
 const buildSectionsHtml = (sections: SectionData[]): string => {
@@ -145,10 +146,15 @@ const FillAndGenerateModal = ({ template, onClose }: FillAndGenerateModalProps) 
     });
   };
 
-  const previewSubject = substitute(channel?.subject, false);
-  const previewContent = substitute(channel?.content, false) || '<i>No content in this channel.</i>';
-  const exportContent = substitute(channel?.content, true);
-  const exportSubject = substitute(channel?.subject, true);
+  // Template content is admin-authored HTML. Sanitize it before rendering so a
+  // template containing scripts/event handlers can never execute in a viewer's
+  // session (stored XSS). Variables are substituted afterward with escaped values.
+  const sanitizedSubject = DOMPurify.sanitize(channel?.subject || '');
+  const sanitizedContent = DOMPurify.sanitize(channel?.content || '');
+  const previewSubject = substitute(sanitizedSubject, false);
+  const previewContent = substitute(sanitizedContent, false) || '<i>No content in this channel.</i>';
+  const exportContent = substitute(sanitizedContent, true);
+  const exportSubject = substitute(sanitizedSubject, true);
 
   const hasChecklist = !channel && (template.checklistItems?.length || 0) > 0;
   const hasSections = !channel && !hasChecklist && (template.sections?.length || 0) > 0;

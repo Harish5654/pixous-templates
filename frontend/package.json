@@ -18,6 +18,7 @@
     "@tiptap/react": "^3.29.2",
     "@tiptap/starter-kit": "^3.29.2",
     "axios": "^1.19.0",
+    "dompurify": "^3.4.13",
     "html-react-parser": "^6.1.5",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",

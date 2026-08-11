@@ -73,6 +73,7 @@ export interface Template {
   id: string;
   name: string;
   description: string;
+  purpose: string;
   department: string;
   category: string;
   status: string;
@@ -92,6 +93,11 @@ export interface Template {
   publishing: PublishingConfig;
   eventTrigger: EventTrigger;
   banner: string;
+  variables: string[];
+  approval_required: boolean;
+  approved_by: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Variable {

@@ -39,6 +39,18 @@ const Layout = () => {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
+  // Auto-collapse the sidebar when the window shrinks past the responsive
+  // breakpoint (mobile/tablet). Only collapses — never forces expansion.
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 900 && useUIStore.getState().sidebarOpen) {
+        useUIStore.getState().toggleSidebar();
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const results = useMemo(() => {
     if (!query.trim() || !templates) return [];
     const q = query.toLowerCase();

@@ -3,6 +3,7 @@ import { useTemplates, useMasterData } from '../api/queries';
 import { Megaphone, CheckCircle2, Paperclip, Calendar } from 'lucide-react';
 import { useAcknowledgementsStore } from '../store/acknowledgementsStore';
 import EmptyState from '../components/EmptyState';
+import DataError from '../components/DataError';
 import FillAndGenerateModal from '../components/FillAndGenerateModal';
 import type { Template } from '../types/template';
 
@@ -11,9 +12,9 @@ const NoticeCard = ({ notice }: { notice: Template }) => {
   const { isAcknowledged, toggleAcknowledge } = useAcknowledgementsStore();
   const [previewOpen, setPreviewOpen] = useState(false);
   const acknowledged = isAcknowledged(notice.id);
-  const requiresAck = notice.publishing.notificationBehavior.requireAcknowledgement;
-  const { effectiveDate, expiryDate } = notice.publishing;
-  const priorityBadgeClass = masterData?.lists.priorities.items.find(p => p.name === notice.publishing.priority)?.badgeClass || 'badge-neutral';
+  const requiresAck = notice.publishing?.notificationBehavior?.requireAcknowledgement ?? false;
+  const { effectiveDate, expiryDate } = notice.publishing || {};
+  const priorityBadgeClass = masterData?.lists.priorities.items.find(p => p.name === notice.publishing?.priority)?.badgeClass || 'badge-neutral';
 
   return (
     <div className="template-card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -28,7 +29,7 @@ const NoticeCard = ({ notice }: { notice: Template }) => {
       <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', flex: 1 }}>
         <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
           <span className="badge badge-neutral">{notice.category}</span>
-          <span className={`badge ${priorityBadgeClass}`}>{notice.publishing.priority}</span>
+          <span className={`badge ${priorityBadgeClass}`}>{notice.publishing?.priority || 'Normal'}</span>
         </div>
 
         <h3 style={{ fontSize: '1rem', marginBottom: '6px', cursor: 'pointer' }} onClick={() => setPreviewOpen(true)}>{notice.name}</h3>
@@ -73,7 +74,7 @@ const NoticeCard = ({ notice }: { notice: Template }) => {
 };
 
 const NoticeBoardPage = () => {
-  const { data: templates, isLoading } = useTemplates();
+  const { data: templates, isLoading, isError } = useTemplates();
   const { data: masterData } = useMasterData();
   const [category, setCategory] = useState<string | null>(null);
 
@@ -84,14 +85,15 @@ const NoticeBoardPage = () => {
   }, [masterData]);
 
   const notices = useMemo(() => {
-    const pinned = (templates || []).filter(t => t.status === 'Published' && t.publishing.notificationBehavior.pinToNoticeBoard);
-    return pinned.sort((a, b) => (priorityOrder[a.publishing.priority] ?? 9) - (priorityOrder[b.publishing.priority] ?? 9));
+    const pinned = (templates || []).filter(t => t.status === 'Published' && t.publishing?.notificationBehavior?.pinToNoticeBoard);
+    return pinned.sort((a, b) => (priorityOrder[a.publishing?.priority ?? ''] ?? 9) - (priorityOrder[b.publishing?.priority ?? ''] ?? 9));
   }, [templates, priorityOrder]);
 
   const categories = useMemo(() => Array.from(new Set(notices.map(n => n.category))), [notices]);
   const filtered = category ? notices.filter(n => n.category === category) : notices;
 
   if (isLoading) return <div>Loading notice board...</div>;
+  if (isError) return <DataError message="Couldn't load the notice board. Check that the server is running and try again." />;
 
   return (
     <div>

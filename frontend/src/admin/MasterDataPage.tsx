@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Search, Save, List as ListIcon, Building2, Languages as LanguagesIcon, AlertTriangle, ArrowUp, ArrowDown, Star, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
 import { useMasterData, useUpdateMasterData, useTemplates, useDeleteTemplate } from '../api/queries';
+import DataError from '../components/DataError';
 import type { MasterDataItem, MasterDataLists, PriorityItem } from '../types/masterData';
 import type { Template } from '../types/template';
 
@@ -251,7 +252,7 @@ const PriorityEditor = ({ items, usageCount, onChange }: PriorityEditorProps) =>
 type TabKey = 'categories' | 'departments' | 'languages' | 'priorities';
 
 const MasterDataPage = () => {
-  const { data, isLoading } = useMasterData();
+  const { data, isLoading, isError } = useMasterData();
   const { data: templates } = useTemplates();
   const updateMasterData = useUpdateMasterData();
   const deleteTemplate = useDeleteTemplate();
@@ -271,7 +272,7 @@ const MasterDataPage = () => {
 
   const categoryUsage = (name: string) => templates?.filter((t) => t.category === name).length || 0;
   const departmentUsage = (name: string) =>
-    templates?.filter((t) => t.department === name || t.publishing.audience.departments.includes(name)).length || 0;
+    templates?.filter((t) => t.department === name || t.publishing?.audience?.departments?.includes(name)).length || 0;
   const languageUsage = (name: string) => templates?.filter((t) => t.language === name).length || 0;
   const priorityUsage = (name: string) => templates?.filter((t) => t.publishing.priority === name).length || 0;
   const getTemplatesForCategory = (name: string) => templates?.filter((t) => t.category === name) || [];
@@ -299,6 +300,7 @@ const MasterDataPage = () => {
   };
 
   if (isLoading || !lists) return <div>Loading master data...</div>;
+  if (isError) return <DataError message="Couldn't load master data. Check that the server is running and try again." />;
 
   const TABS: { key: TabKey; label: string; icon: typeof ListIcon; count: number }[] = [
     { key: 'categories', label: 'Categories', icon: ListIcon, count: lists.categories.items.length },

@@ -9,7 +9,9 @@ import FillAndGenerateModal from './FillAndGenerateModal';
 
 const STATUS_BADGE: Record<string, string> = {
   Published: 'badge-success',
+  'Pending Approval': 'badge-warning',
   Draft: 'badge-warning',
+  Archived: 'badge-neutral',
 };
 
 type CardMode = 'use' | 'manage' | 'combined';
@@ -42,9 +44,8 @@ const TemplateCard = ({ template, mode = 'combined' }: TemplateCardProps) => {
     setIsRenaming(false);
     const name = renameValue.trim();
     if (!name || name === template.name) { setRenameValue(template.name); return; }
-    const { id, created_by, updated_by, version, ...rest } = template;
     try {
-      await updateTemplate.mutateAsync({ id, payload: { ...rest, name } });
+      await updateTemplate.mutateAsync({ id: template.id, payload: { ...template, name } });
     } catch (err: any) {
       alert(`Rename failed: ${err?.response?.data?.detail || err.message}`);
       setRenameValue(template.name);
@@ -52,10 +53,9 @@ const TemplateCard = ({ template, mode = 'combined' }: TemplateCardProps) => {
   };
 
   const handleDuplicate = async () => {
-    const { id, created_by, updated_by, version, ...rest } = template;
     try {
       const copy = await createTemplate.mutateAsync({
-        ...rest,
+        ...template,
         name: `Copy of ${template.name}`,
         status: 'Draft',
       });

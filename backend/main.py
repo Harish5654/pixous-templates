@@ -2,11 +2,12 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import logging
 import os
+import secrets
 import time
 import uuid
 import requests
@@ -14,8 +15,8 @@ from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
 from db import ConfigRecord, TemplateRecord, UserRecord, VariableRecord, get_db, init_db
-from seed import MASTER_DATA_KEY, seed_if_empty
-from auth import create_access_token, get_current_user, require_roles, verify_password
+from seed import MASTER_DATA_KEY, extract_template_variables, mark_password_reset, seed_if_empty
+from auth import create_access_token, get_current_user, hash_password, require_roles, verify_password
 
 load_dotenv()
 
@@ -88,8 +89,8 @@ class BrandingConfig(BaseModel):
 
 class ChannelData(BaseModel):
     enabled: bool
-    subject: Optional[str] = ""
-    content: str
+    subject: Optional[str] = Field(default="", max_length=500)
+    content: str = Field(max_length=100_000)
 
 class SectionData(BaseModel):
     id: str
@@ -135,24 +136,38 @@ class EventTrigger(BaseModel):
     leadTimeDays: int
 
 class TemplateBase(BaseModel):
-    name: str
-    description: str
-    department: str
-    category: str
-    status: str
-    owner: str
-    language: str
-    visibility: str
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    purpose: str = Field(default="", max_length=2000)
+    department: str = Field(min_length=1, max_length=100)
+    category: str = Field(min_length=1, max_length=100)
+    status: str = Field(min_length=1, max_length=50)
+    owner: str = Field(default="", max_length=100)
+    language: str = Field(default="", max_length=50)
+    visibility: str = Field(default="Internal", max_length=50)
     tags: List[str] = []
     branding: BrandingConfig
     channels: Dict[str, ChannelData] = {}
     allowed_attachments: List[str] = []
     sections: List[SectionData] = []
     checklistItems: List[ChecklistItem] = []
-    signoffRole: str = ""
+    signoffRole: str = Field(default="", max_length=100)
     publishing: PublishingConfig
     eventTrigger: EventTrigger
-    banner: str = ""
+    banner: str = Field(default="", max_length=4000)
+    variables: List[str] = []
+    approval_required: bool = False
+    approved_by: str = Field(default="", max_length=100)
+    created_at: str = ""
+    updated_at: str = ""
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("name must not be blank")
+        return v
 
 class TemplateCreate(TemplateBase):
     pass
@@ -163,6 +178,9 @@ class TemplateUpdate(TemplateBase):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+class PasswordResetRequest(BaseModel):
+    password: Optional[str] = None
 
 class MasterDataItem(BaseModel):
     id: str
@@ -214,6 +232,31 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
     }
 
 
+# --- Users & password reset (admin only) ---
+@api.get("/users")
+def list_users(db: Session = Depends(get_db), user: UserRecord = Depends(require_roles("Admin"))):
+    return [
+        {"id": u.id, "name": u.name, "email": u.email, "role": u.role}
+        for u in db.query(UserRecord).order_by(UserRecord.name).all()
+    ]
+
+@api.post("/users/{user_id}/reset-password")
+def reset_user_password(user_id: str, req: PasswordResetRequest, db: Session = Depends(get_db), user: UserRecord = Depends(require_roles("Admin"))):
+    record = db.query(UserRecord).filter(UserRecord.id == user_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="User not found")
+    new_password = (req.password or "").strip()
+    if not new_password:
+        new_password = secrets.token_urlsafe(9)
+    elif len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters long")
+    record.hashed_password = hash_password(new_password)
+    mark_password_reset(db, record.email)
+    db.commit()
+    logger.info("Password reset for %s by %s", record.email, user.email)
+    return {"id": record.id, "email": record.email, "password": new_password}
+
+
 # --- Templates ---
 @api.get("/templates")
 def get_templates(db: Session = Depends(get_db), user: UserRecord = Depends(get_current_user)):
@@ -229,11 +272,15 @@ def get_template(template_id: str, db: Session = Depends(get_db), user: UserReco
 @api.post("/templates")
 def create_template(template: TemplateCreate, db: Session = Depends(get_db), user: UserRecord = Depends(require_roles("Admin", "Editor"))):
     new_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
     data = template.model_dump()
     data["id"] = new_id
     data["created_by"] = user.name
     data["updated_by"] = user.name
     data["version"] = 1
+    data["created_at"] = now
+    data["updated_at"] = now
+    data["variables"] = extract_template_variables(data)
     db.add(TemplateRecord(id=new_id, payload=data))
     db.commit()
     return data
@@ -243,11 +290,15 @@ def update_template(template_id: str, template: TemplateUpdate, db: Session = De
     record = db.query(TemplateRecord).filter(TemplateRecord.id == template_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="Template not found")
+    now = datetime.now(timezone.utc).isoformat()
     updated_data = template.model_dump()
     updated_data["id"] = record.payload["id"]
     updated_data["created_by"] = record.payload["created_by"]
+    updated_data["created_at"] = record.payload.get("created_at", now)
     updated_data["updated_by"] = user.name
+    updated_data["updated_at"] = now
     updated_data["version"] = record.payload["version"] + 1
+    updated_data["variables"] = extract_template_variables(updated_data)
     record.payload = updated_data
     db.commit()
     return updated_data
@@ -260,6 +311,68 @@ def delete_template(template_id: str, db: Session = Depends(get_db), user: UserR
     db.delete(record)
     db.commit()
     return {"deleted": True, "id": template_id}
+
+# --- Approvals workflow ---
+# Lifecycle: Draft -> Pending Approval -> Published (approve) or Draft (reject).
+# Templates opt in by setting approval_required=true; the owning Editor (or an
+# Admin) submits them, then an Admin reviews from the Approvals page.
+PENDING_STATUS = "Pending Approval"
+
+
+def _touch_for_review(db: Session, record: TemplateRecord, user: UserRecord, **updates) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    payload = dict(record.payload)
+    payload.update(updates)
+    payload["updated_by"] = user.name
+    payload["updated_at"] = now
+    record.payload = payload
+    db.commit()
+    return payload
+
+
+@api.post("/templates/{template_id}/submit-for-approval")
+def submit_for_approval(template_id: str, db: Session = Depends(get_db), user: UserRecord = Depends(require_roles("Admin", "Editor"))):
+    record = db.query(TemplateRecord).filter(TemplateRecord.id == template_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Template not found")
+    payload = record.payload
+    if not payload.get("approval_required"):
+        raise HTTPException(status_code=400, detail="This template does not require approval (enable Approval Required in the editor first)")
+    if payload.get("status") == PENDING_STATUS:
+        raise HTTPException(status_code=409, detail="Template is already pending approval")
+    if payload.get("status") == "Published":
+        raise HTTPException(status_code=409, detail="Template is already published")
+    return _touch_for_review(db, record, user, status=PENDING_STATUS, approved_by="")
+
+
+@api.get("/approvals")
+def get_approvals(db: Session = Depends(get_db), user: UserRecord = Depends(get_current_user)):
+    rows = db.query(TemplateRecord).all()
+    pending = [r.payload for r in rows if r.payload.get("status") == PENDING_STATUS]
+    if user.role != "Admin":
+        # Editors see only their own submissions; employees see none.
+        pending = [p for p in pending if p.get("created_by") == user.name]
+    return pending
+
+
+@api.post("/templates/{template_id}/approve")
+def approve_template(template_id: str, db: Session = Depends(get_db), user: UserRecord = Depends(require_roles("Admin"))):
+    record = db.query(TemplateRecord).filter(TemplateRecord.id == template_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if record.payload.get("status") != PENDING_STATUS:
+        raise HTTPException(status_code=409, detail="Only templates awaiting approval can be approved")
+    return _touch_for_review(db, record, user, status="Published", approved_by=user.name)
+
+
+@api.post("/templates/{template_id}/reject")
+def reject_template(template_id: str, db: Session = Depends(get_db), user: UserRecord = Depends(require_roles("Admin"))):
+    record = db.query(TemplateRecord).filter(TemplateRecord.id == template_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if record.payload.get("status") != PENDING_STATUS:
+        raise HTTPException(status_code=409, detail="Only templates awaiting approval can be rejected")
+    return _touch_for_review(db, record, user, status="Draft", approved_by="")
 
 @api.get("/categories")
 def get_categories(db: Session = Depends(get_db), user: UserRecord = Depends(get_current_user)):
@@ -369,6 +482,10 @@ if os.path.isdir(FRONTEND_DIST):
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
+        # Never let the SPA fallback swallow unknown /api routes: API consumers
+        # must get a JSON 404, not the index.html shell.
+        if full_path.startswith("api/"):
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
         candidate = os.path.join(FRONTEND_DIST, full_path)
         if full_path and os.path.isfile(candidate):
             return FileResponse(candidate)

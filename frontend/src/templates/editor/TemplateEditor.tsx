@@ -3,11 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
-import { useTemplate, useVariables, useAIAction, useCreateTemplate, useUpdateTemplate, useMasterData, useUpdateMasterData } from '../../api/queries';
+import { useTemplate, useVariables, useAIAction, useCreateTemplate, useUpdateTemplate, useMasterData, useUpdateMasterData, useSubmitForApproval } from '../../api/queries';
+import DOMPurify from 'dompurify';
 import { useAuthStore } from '../../store/authStore';
 import {
   Save, ArrowLeft, Settings2, Play, Send, CheckCircle2, ArrowUp, ArrowDown, Trash2, Plus, Zap,
-  Undo2, Redo2, PanelRightClose, PanelRightOpen, Search, Layers, Users, Megaphone, Image, Paperclip, X
+  Undo2, Redo2, PanelRightClose, PanelRightOpen, Search, Layers, Users, Megaphone, Image, Paperclip, Info, X
 } from 'lucide-react';
 import type { ChannelData, Channels, BrandingConfig, SectionData, ChecklistItem, PublishingConfig, AudienceSelection, NotificationBehavior, EventTrigger, EventType, Variable } from '../../types/template';
 import { useRecentStore } from '../../store/recentStore';
@@ -49,6 +50,7 @@ const TemplateEditor = () => {
   const createTemplate = useCreateTemplate();
   const updateTemplate = useUpdateTemplate();
   const updateMasterData = useUpdateMasterData();
+  const submitForApproval = useSubmitForApproval();
   const currentUser = useAuthStore((s) => s.user);
   const canManageMasterData = currentUser?.role === 'Admin';
 
@@ -65,6 +67,7 @@ const TemplateEditor = () => {
   const [metadata, setMetadata] = useState({
     name: 'Untitled Template',
     description: '',
+    purpose: '',
     category: 'Client Communication',
     status: 'Draft',
     department: 'General',
@@ -90,7 +93,15 @@ const TemplateEditor = () => {
     publishing: DEFAULT_PUBLISHING,
     eventTrigger: DEFAULT_EVENT_TRIGGER,
     banner: '',
-    allowed_attachments: [] as string[]
+    allowed_attachments: [] as string[],
+    variables: [] as string[],
+    approval_required: false,
+    approved_by: '',
+    version: 1,
+    created_by: currentUser?.name || '',
+    updated_by: currentUser?.name || '',
+    created_at: '',
+    updated_at: ''
   });
 
   const [newAttachment, setNewAttachment] = useState('');
@@ -104,7 +115,7 @@ const TemplateEditor = () => {
   }, [isNew, masterData]);
 
   const activeCategories = masterData?.lists.categories.items.filter(c => c.active || c.name === metadata.category) || [];
-  const activeDepartments = masterData?.lists.departments.items.filter(d => d.active) || [];
+  const activeDepartments = masterData?.lists.departments.items.filter(d => d.active || d.name === metadata.department) || [];
   const activeLanguages = masterData?.lists.languages.items.filter(l => l.active || l.name === metadata.language) || [];
   const priorityOptions = [...(masterData?.lists.priorities.items || [])]
     .filter(p => p.active || p.name === metadata.publishing.priority)
@@ -121,11 +132,19 @@ const TemplateEditor = () => {
     }
   });
 
+  // Hydrate the editor exactly once per template load. Channel switching
+  // afterwards is handled by switchChannel(), so this deliberately skips
+  // re-running when activeChannel changes.
+  const hydratedIdRef = React.useRef<string | null>(null);
+
   useEffect(() => {
     if (template && editor) {
+      if (hydratedIdRef.current === template.id) return;
+      hydratedIdRef.current = template.id;
       setMetadata({
         name: template.name,
         description: template.description,
+        purpose: template.purpose || '',
         category: template.category,
         status: template.status,
         department: template.department,
@@ -141,15 +160,33 @@ const TemplateEditor = () => {
         publishing: template.publishing || DEFAULT_PUBLISHING,
         eventTrigger: template.eventTrigger || DEFAULT_EVENT_TRIGGER,
         banner: template.banner || '',
-        allowed_attachments: template.allowed_attachments || []
+        allowed_attachments: template.allowed_attachments || [],
+        variables: template.variables || [],
+        approval_required: template.approval_required ?? false,
+        approved_by: template.approved_by || '',
+        version: template.version || 1,
+        created_by: template.created_by || '',
+        updated_by: template.updated_by || '',
+        created_at: template.created_at || '',
+        updated_at: template.updated_at || ''
       });
       const isNotice = NOTICE_CATEGORIES.includes(template.category);
-      const loadChannel = isNotice ? 'notice' : activeChannel;
-      if (isNotice) setActiveChannel('notice');
-      editor.commands.setContent(template.channels[loadChannel]?.content || '');
+      // Notice-category templates normally carry a 'notice' channel; when one
+      // is missing (e.g. regular document templates that live in those
+      // categories), fall back to the first enabled channel so content loads.
+      if (isNotice) {
+        const hasNotice = !!template.channels['notice']?.enabled;
+        const loadChannel = hasNotice
+          ? 'notice'
+          : (Object.keys(template.channels).find(k => template.channels[k]?.enabled) || activeChannel);
+        setActiveChannel(loadChannel);
+        editor.commands.setContent(template.channels[loadChannel]?.content || '');
+      } else {
+        editor.commands.setContent(template.channels[activeChannel]?.content || '');
+      }
       if (!isNew) addRecent(template.id);
     }
-  }, [template, editor]);
+  }, [template, editor, activeChannel, isNew, addRecent]);
 
   if (!isNew && isTemplateLoading) return <div>Loading editor...</div>;
 
@@ -292,7 +329,8 @@ const TemplateEditor = () => {
 
   const substituteVariables = (content: string) => {
     if (!content) return content;
-    return content.replace(/\{\{(\w+)\}\}/g, (match, varName) => {
+    // Sanitize authored HTML before rendering the preview (stored-XSS defense).
+    return DOMPurify.sanitize(content).replace(/\{\{(\w+)\}\}/g, (match, varName) => {
       const found = variables?.find(v => v.name === varName);
       return found ? found.default_value : match;
     });
@@ -302,8 +340,43 @@ const TemplateEditor = () => {
     editor?.chain().focus().insertContent(`{{${varName}}}`).run();
   };
 
+  const extractPlaceholders = (...texts: (string | undefined)[]): string[] => {
+    const found = new Set<string>();
+    texts.forEach((text) => {
+      if (!text) return;
+      for (const match of text.matchAll(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g)) {
+        found.add(match[1]);
+      }
+    });
+    return Array.from(found);
+  };
+
+  const computeVariables = (m: typeof metadata): string[] => {
+    const texts: (string | undefined)[] = [m.description];
+    Object.values(m.channels).forEach(ch => { texts.push(ch?.subject); texts.push(ch?.content); });
+    m.sections.forEach(s => { if (typeof s.defaultContent === 'string') texts.push(s.defaultContent); });
+    m.checklistItems.forEach(ci => { texts.push(ci.title); texts.push(ci.description); });
+    return extractPlaceholders(...texts);
+  };
+
   const handleSave = async () => {
-    const payload = { ...metadata };
+    if (!metadata.name.trim()) {
+      alert('Template name is required before saving.');
+      return;
+    }
+    const payload = {
+      ...metadata,
+      name: metadata.name.trim(),
+      // Defense in depth: strip any script-bearing markup before persisting.
+      channels: Object.fromEntries(
+        Object.entries(metadata.channels).map(([key, ch]) => [key, {
+          ...ch,
+          subject: DOMPurify.sanitize(ch?.subject || ''),
+          content: DOMPurify.sanitize(ch?.content || ''),
+        }])
+      ),
+      variables: computeVariables(metadata),
+    };
     try {
       if (isNew) {
         await createTemplate.mutateAsync(payload);
@@ -341,6 +414,16 @@ const TemplateEditor = () => {
     if (language) applyAIAction('Translate', language);
   };
 
+  const handleSubmitForApproval = async () => {
+    if (!id) return;
+    try {
+      await submitForApproval.mutateAsync(id);
+      setMetadata(prev => ({ ...prev, status: 'Pending Approval' }));
+    } catch (err: any) {
+      alert(`Submit failed: ${err?.response?.data?.detail || err.message}`);
+    }
+  };
+
   const handleAddCategory = async () => {
     const name = newCategoryName.trim();
     if (!name || !masterData) return;
@@ -374,7 +457,7 @@ const TemplateEditor = () => {
         {/* Header */}
         <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0, flex: '1 1 auto' }}>
-            <button className="btn btn-outline" style={{ padding: '8px', flexShrink: 0 }} onClick={() => navigate('/templates')}>
+            <button className="btn btn-outline" style={{ padding: '8px', flexShrink: 0 }} onClick={() => navigate('/templates')} title="Back to templates" aria-label="Back to templates">
               <ArrowLeft size={18} />
             </button>
             <input
@@ -383,6 +466,7 @@ const TemplateEditor = () => {
               value={metadata.name}
               onChange={e => setMetadata({...metadata, name: e.target.value})}
               title="Click to rename this template"
+              aria-label="Template name"
               style={{ fontSize: '1.4rem', fontWeight: 'bold', background: 'transparent', border: 'none', borderBottom: '1px dashed transparent', color: 'var(--text-primary)', outline: 'none', padding: '2px 0', transition: 'border-color 0.15s ease', minWidth: 0, flex: '1 1 auto' }}
               onFocus={e => e.currentTarget.style.borderBottomColor = 'var(--accent-primary)'}
               onBlur={e => e.currentTarget.style.borderBottomColor = 'transparent'}
@@ -404,6 +488,11 @@ const TemplateEditor = () => {
             <button className="btn btn-outline" onClick={() => setPreviewOpen(true)}>
               <Play size={16} /> Preview
             </button>
+            {!isNew && metadata.approval_required && metadata.status === 'Draft' && (
+              <button className="btn btn-outline" onClick={handleSubmitForApproval} disabled={submitForApproval.isPending}>
+                <Send size={16} /> {submitForApproval.isPending ? 'Submitting...' : 'Submit for Approval'}
+              </button>
+            )}
             <button className="btn" onClick={handleSave} disabled={createTemplate.isPending || updateTemplate.isPending}>
               <Save size={16} /> {createTemplate.isPending || updateTemplate.isPending ? 'Saving...' : 'Save'}
             </button>
@@ -413,11 +502,17 @@ const TemplateEditor = () => {
           </div>
         </div>
 
+        {metadata.status === 'Pending Approval' && (
+          <div style={{ background: 'var(--accent-soft)', border: '1px solid var(--accent-primary)', color: 'var(--accent-primary)', padding: '10px 14px', borderRadius: 'var(--radius-sm)', marginBottom: '16px', fontSize: '0.9rem', fontWeight: 500 }}>
+            ⏳ This template is submitted for approval — it will be published once a reviewer signs off.
+          </div>
+        )}
+
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginBottom: '20px', paddingLeft: '58px' }}>
           {isNew ? (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <label style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Category</label>
+                <label htmlFor="template-category" style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Category</label>
                 {showAddCategory ? (
                   <>
                     <input
@@ -436,6 +531,7 @@ const TemplateEditor = () => {
                   <select
                     className="form-input"
                     data-testid="template-category-select"
+                    id="template-category"
                     style={{ width: 'auto', minWidth: '180px' }}
                     value={metadata.category}
                     onChange={e => { if (e.target.value === '__add_new__') setShowAddCategory(true); else setMetadata({ ...metadata, category: e.target.value }); }}
@@ -446,8 +542,8 @@ const TemplateEditor = () => {
                 )}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <label style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Language</label>
-                <select className="form-input" data-testid="template-language-select" style={{ width: 'auto', minWidth: '140px' }} value={metadata.language} onChange={e => setMetadata({ ...metadata, language: e.target.value })}>
+                <label htmlFor="template-language" style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Language</label>
+                <select id="template-language" className="form-input" data-testid="template-language-select" style={{ width: 'auto', minWidth: '140px' }} value={metadata.language} onChange={e => setMetadata({ ...metadata, language: e.target.value })}>
                   {activeLanguages.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                 </select>
               </div>
@@ -564,8 +660,9 @@ const TemplateEditor = () => {
           /* Notice Board Builder Mode (Phase 6) */
           <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
             <div className="form-group">
-              <label className="form-label">Banner Image URL</label>
+              <label className="form-label" htmlFor="notice-banner-main">Banner Image URL</label>
               <input
+                id="notice-banner-main"
                 type="text"
                 className="form-input"
                 placeholder="https://..."
@@ -645,7 +742,7 @@ const TemplateEditor = () => {
               <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
                 {activeChannel === 'email' && (
                   <div className="form-group">
-                    <input type="text" className="form-input" placeholder="Subject Line" value={activeChannelData.subject || ''} onChange={(e) => handleChannelChange(activeChannel, 'subject', e.target.value)} style={{ fontSize: '1.1rem', padding: '12px 16px' }} />
+                    <input type="text" className="form-input" placeholder="Subject Line" aria-label="Email subject" value={activeChannelData.subject || ''} onChange={(e) => handleChannelChange(activeChannel, 'subject', e.target.value)} style={{ fontSize: '1.1rem', padding: '12px 16px' }} />
                   </div>
                 )}
                 {editor && (
@@ -702,11 +799,88 @@ const TemplateEditor = () => {
           <h2 style={{ margin: 0, fontSize: '1.1rem' }}>Configuration</h2>
         </div>
 
+        <Accordion title="Details & Metadata" icon={<Info size={15} color="var(--accent-primary)" />} defaultOpen>
+          <div className="form-group">
+            <label className="form-label" htmlFor="template-description">Description</label>
+            <textarea
+              id="template-description"
+              className="form-input"
+              rows={2}
+              placeholder="What does this template contain?"
+              value={metadata.description}
+              onChange={e => setMetadata({ ...metadata, description: e.target.value })}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="template-purpose">Purpose</label>
+            <textarea
+              id="template-purpose"
+              className="form-input"
+              rows={2}
+              placeholder="What is this template used for?"
+              value={metadata.purpose}
+              onChange={e => setMetadata({ ...metadata, purpose: e.target.value })}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="template-department">Department</label>
+            <select id="template-department" className="form-input" value={metadata.department} onChange={e => setMetadata({ ...metadata, department: e.target.value })}>
+              {activeDepartments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="template-owner">Owner</label>
+            <input id="template-owner" type="text" className="form-input" value={metadata.owner} onChange={e => setMetadata({ ...metadata, owner: e.target.value })} />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="template-status">Status</label>
+            <select id="template-status" className="form-input" value={metadata.status} onChange={e => setMetadata({ ...metadata, status: e.target.value })}>
+              <option value="Draft">Draft</option>
+              <option value="Pending Approval">Pending Approval</option>
+              <option value="Published">Active / Published</option>
+              <option value="Archived">Archived</option>
+            </select>
+          </div>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.9rem', cursor: 'pointer', marginBottom: '10px' }}>
+            <input type="checkbox" checked={metadata.approval_required} onChange={e => setMetadata({ ...metadata, approval_required: e.target.checked })} />
+            Approval Required
+          </label>
+
+          {metadata.approval_required && (
+            <div className="form-group">
+              <label className="form-label" htmlFor="template-approved-by">Approved By</label>
+              <input id="template-approved-by" type="text" className="form-input" placeholder="Name of approver" value={metadata.approved_by} onChange={e => setMetadata({ ...metadata, approved_by: e.target.value })} />
+            </div>
+          )}
+
+          {!isNew && (
+            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' }}>
+              <div>Version <strong>{metadata.version}</strong></div>
+              <div>Created by {metadata.created_by || '—'} · {metadata.created_at ? new Date(metadata.created_at).toLocaleDateString() : '—'}</div>
+              <div>Last updated {metadata.updated_at ? new Date(metadata.updated_at).toLocaleDateString() : '—'}</div>
+            </div>
+          )}
+
+          <h4 style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '16px', marginBottom: '8px' }}>Variables / Placeholders</h4>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+            {metadata.variables.length > 0 ? metadata.variables.map(name => (
+              <span key={name} className="chip" title="Auto-detected from template content">{`{{${name}}}`}</span>
+            )) : (
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>No placeholders detected yet — add {'{{VariableName}}'} tags to your content.</p>
+            )}
+          </div>
+        </Accordion>
+
         {isEventBuilder && (
           <Accordion title="Auto-Generation Trigger" icon={<Zap size={15} color="var(--accent-primary)" />} defaultOpen>
             <div className="form-group">
-              <label className="form-label">Triggering Event</label>
-              <select className="form-input" value={metadata.eventTrigger.eventType} onChange={e => handleEventTriggerChange('eventType', e.target.value)}>
+              <label className="form-label" htmlFor="template-event-type">Triggering Event</label>
+              <select id="template-event-type" className="form-input" value={metadata.eventTrigger.eventType} onChange={e => handleEventTriggerChange('eventType', e.target.value)}>
                 {EVENT_TYPES.map(et => <option key={et} value={et}>{et}</option>)}
               </select>
             </div>
@@ -723,8 +897,8 @@ const TemplateEditor = () => {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Lead Time (days before event)</label>
-              <input type="number" min={0} className="form-input" value={metadata.eventTrigger.leadTimeDays} onChange={e => handleEventTriggerChange('leadTimeDays', Number(e.target.value))} />
+              <label className="form-label" htmlFor="template-lead-time">Lead Time (days before event)</label>
+              <input id="template-lead-time" type="number" min={0} className="form-input" value={metadata.eventTrigger.leadTimeDays} onChange={e => handleEventTriggerChange('leadTimeDays', Number(e.target.value))} />
             </div>
 
             {!metadata.eventTrigger.autoPublish && metadata.eventTrigger.autoGenerate && (
@@ -738,13 +912,14 @@ const TemplateEditor = () => {
         {isNoticeBuilder && (
           <Accordion title="Notice Details" icon={<Image size={15} color="var(--accent-primary)" />} defaultOpen>
             <div className="form-group">
-              <label className="form-label">Banner Image URL</label>
-              <input type="text" className="form-input" placeholder="https://..." value={metadata.banner} onChange={(e) => setMetadata({ ...metadata, banner: e.target.value })} />
+              <label className="form-label" htmlFor="notice-banner-sidebar">Banner Image URL</label>
+              <input id="notice-banner-sidebar" type="text" className="form-input" placeholder="https://..." value={metadata.banner} onChange={(e) => setMetadata({ ...metadata, banner: e.target.value })} />
             </div>
 
-            <label className="form-label" style={{ marginTop: '16px', display: 'block' }}>Attachments</label>
+            <label className="form-label" htmlFor="notice-attachments" style={{ marginTop: '16px', display: 'block' }}>Attachments</label>
             <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
               <input
+                id="notice-attachments"
                 type="text"
                 className="form-input"
                 placeholder="e.g. Policy.pdf"
@@ -771,8 +946,8 @@ const TemplateEditor = () => {
         {isChecklistBuilder ? (
           <Accordion title="Signoff Required" icon={<CheckCircle2 size={15} color="var(--accent-primary)" />} defaultOpen>
             <div className="form-group">
-              <label className="form-label">Require digital signoff by:</label>
-              <select className="form-input" value={metadata.signoffRole} onChange={e => setMetadata({...metadata, signoffRole: e.target.value})}>
+              <label className="form-label" htmlFor="template-signoff-role">Require digital signoff by:</label>
+              <select id="template-signoff-role" className="form-input" value={metadata.signoffRole} onChange={e => setMetadata({...metadata, signoffRole: e.target.value})}>
                 <option value="">None (Auto-complete)</option>
                 <option value="Manager">Manager</option>
                 <option value="Admin">Admin</option>
@@ -1060,7 +1235,7 @@ const TemplateEditor = () => {
                            </table>
                          )}
                          {section.type === 'RichText' && (
-                           <div style={{ color: '#444', lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: section.defaultContent || '<p><i>Meeting notes go here...</i></p>' }} />
+                           <div style={{ color: '#444', lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: typeof section.defaultContent === 'string' ? DOMPurify.sanitize(section.defaultContent) : '<p><i>Meeting notes go here...</i></p>' }} />
                          )}
                          {section.type === 'Table' && (
                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>

@@ -4,13 +4,15 @@ import { Star } from 'lucide-react';
 import { useFavoritesStore } from '../store/favoritesStore';
 import TemplateCard from '../components/TemplateCard';
 import EmptyState from '../components/EmptyState';
+import DataError from '../components/DataError';
 
 const FavoritesPage = () => {
   const navigate = useNavigate();
-  const { data: templates, isLoading } = useTemplates();
+  const { data: templates, isLoading, isError } = useTemplates();
   const { favoriteIds } = useFavoritesStore();
 
   if (isLoading) return <div>Loading favorites...</div>;
+  if (isError) return <DataError message="Couldn't load favorites. Check that the server is running and try again." />;
 
   const favorites = templates?.filter((t) => favoriteIds.includes(t.id)) || [];
 

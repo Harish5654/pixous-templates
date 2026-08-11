@@ -1,9 +1,9 @@
 import { test as setup, expect } from '@playwright/test';
 
 export const ACCOUNTS = {
-  admin: { email: 'admin@pixoustech.com', password: 'password123', file: '.auth/admin.json' },
-  editor: { email: 'editor@pixoustech.com', password: 'password123', file: '.auth/editor.json' },
-  employee: { email: 'employee@pixoustech.com', password: 'password123', file: '.auth/employee.json' },
+  admin: { email: 'admin@pixoustech.com', password: 'Admin@123', file: '.auth/admin.json' },
+  editor: { email: 'editor@pixoustech.com', password: 'Editor@123', file: '.auth/editor.json' },
+  employee: { email: 'employee@pixoustech.com', password: 'Employee@123', file: '.auth/employee.json' },
 };
 
 for (const [role, { email, password, file }] of Object.entries(ACCOUNTS)) {

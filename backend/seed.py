@@ -1,14 +1,39 @@
+import re
 import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from auth import hash_password
+from auth import hash_password, verify_password
 from db import ConfigRecord, TemplateRecord, UserRecord, VariableRecord
+from library_seed import SEED_TIMESTAMP, build_library_templates, build_variables as build_library_variables
 
 NOTICE_CATEGORIES = ["Security", "Infrastructure", "IT", "HR", "Facilities", "Projects", "Management", "Support"]
 
 MASTER_DATA_KEY = "master-data"
+LIBRARY_IMPORT_KEY = "library-import-v2"
+PASSWORD_RESET_KEY = "password-resets"
+
+
+def get_manual_password_resets(db: Session) -> set:
+    """Emails whose password was manually reset by an admin. The startup demo
+    password sync must not overwrite these."""
+    record = db.query(ConfigRecord).filter(ConfigRecord.key == PASSWORD_RESET_KEY).first()
+    if not record:
+        return set()
+    return set(record.payload.get("emails", []))
+
+
+def mark_password_reset(db: Session, email: str):
+    record = db.query(ConfigRecord).filter(ConfigRecord.key == PASSWORD_RESET_KEY).first()
+    if not record:
+        record = ConfigRecord(key=PASSWORD_RESET_KEY, payload={"emails": []})
+        db.add(record)
+    if email not in record.payload["emails"]:
+        record.payload["emails"].append(email)
+    db.commit()
+
+VAR_NAME_PATTERN = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
 
 
 def _item(name, **extra):
@@ -745,11 +770,201 @@ def build_templates():
     return templates
 
 
+# Each demo role gets its own separate credentials. The login page exposes a
+# role selector that auto-fills these, so the shared password no longer needs
+# to be displayed anywhere.
 DEMO_USERS = [
-    {"email": "admin@pixoustech.com", "name": "Admin User", "role": "Admin", "password": "password123"},
-    {"email": "editor@pixoustech.com", "name": "HR Editor", "role": "Editor", "password": "password123"},
-    {"email": "employee@pixoustech.com", "name": "Sample Employee", "role": "Employee", "password": "password123"},
+    {"email": "admin@pixoustech.com", "name": "Admin User", "role": "Admin", "password": "Admin@123"},
+    {"email": "editor@pixoustech.com", "name": "HR Editor", "role": "Editor", "password": "Editor@123"},
+    {"email": "employee@pixoustech.com", "name": "Sample Employee", "role": "Employee", "password": "Employee@123"},
 ]
+
+
+def sync_demo_user_passwords(db: Session):
+    """Keep the seeded demo users' passwords aligned with their role-specific
+    credentials so the login page auto-fill always works (including on
+    databases that were seeded before the per-role passwords existed).
+    Runs every startup; only rewrites a hash when it differs. Accounts whose
+    password an admin reset manually are left alone."""
+    changed = False
+    manually_reset = get_manual_password_resets(db)
+    for u in DEMO_USERS:
+        if u["email"] in manually_reset:
+            continue
+        user = db.query(UserRecord).filter(UserRecord.email == u["email"]).first()
+        if user and not verify_password(u["password"], user.hashed_password):
+            user.hashed_password = hash_password(u["password"])
+            changed = True
+    if changed:
+        db.commit()
+
+
+def extract_template_variables(payload) -> list:
+    """Extract the {{Placeholder}} names used anywhere in a template payload."""
+    found, seen = [], set()
+    texts = [payload.get("description", "")]
+    for ch in payload.get("channels", {}).values():
+        if isinstance(ch, dict):
+            texts.append(ch.get("subject", ""))
+            texts.append(ch.get("content", ""))
+    for s in payload.get("sections", []):
+        dc = s.get("defaultContent") if isinstance(s, dict) else None
+        if isinstance(dc, str):
+            texts.append(dc)
+    for ci in payload.get("checklistItems", []):
+        if isinstance(ci, dict):
+            texts.append(ci.get("title", ""))
+            texts.append(ci.get("description", ""))
+    for text in texts:
+        for m in VAR_NAME_PATTERN.finditer(text or ""):
+            if m.group(1) not in seen:
+                seen.add(m.group(1))
+                found.append(m.group(1))
+    return found
+
+
+def import_library(db: Session):
+    """One-time, idempotent import that:
+
+    * inserts every template from the complete business template library that
+      isn't already present (matched by name),
+    * fills any gaps in the variable library so every placeholder has a
+      default fill value,
+    * enriches every template with the standard metadata fields,
+    * extends master-data departments for categories the library uses.
+
+    Runs once per database (tracked by a config flag), so existing
+    installations pick up the new library without being re-seeded.
+    """
+    if db.query(ConfigRecord).filter(ConfigRecord.key == LIBRARY_IMPORT_KEY).first():
+        return
+
+    existing_names = {r.payload.get("name") for r in db.query(TemplateRecord).all()}
+    for t in build_library_templates():
+        if t["name"] in existing_names:
+            continue
+        db.add(TemplateRecord(id=t["id"], payload=t))
+        existing_names.add(t["name"])
+
+    # Enrich every template with the standard metadata fields.
+    for r in db.query(TemplateRecord).all():
+        p = dict(r.payload)
+        changed = False
+        if not p.get("purpose"):
+            p["purpose"] = p.get("description", "")
+            changed = True
+        if not isinstance(p.get("variables"), list):
+            p["variables"] = extract_template_variables(p)
+            changed = True
+        if not p.get("created_at"):
+            p["created_at"] = SEED_TIMESTAMP
+            changed = True
+        if not p.get("updated_at"):
+            p["updated_at"] = SEED_TIMESTAMP
+            changed = True
+        if "approval_required" not in p:
+            p["approval_required"] = False
+            changed = True
+        if "approved_by" not in p:
+            p["approved_by"] = ""
+            changed = True
+        if changed:
+            r.payload = p
+
+    # Extend master-data departments for categories the library uses.
+    md = db.query(ConfigRecord).filter(ConfigRecord.key == MASTER_DATA_KEY).first()
+    if md:
+        lists = md.payload["lists"]
+        dept_items = lists["departments"]["items"]
+        existing = {d["name"] for d in dept_items}
+        for name in ["Facilities", "Management", "Legal"]:
+            if name not in existing:
+                dept_items.append(_item(name))
+                existing.add(name)
+        md.payload = {
+            **md.payload,
+            "updatedBy": "System",
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "lists": lists,
+        }
+
+    db.add(ConfigRecord(key=LIBRARY_IMPORT_KEY, payload={"importedAt": datetime.now(timezone.utc).isoformat()}))
+    db.commit()
+
+
+# Legacy templates (originally seeded) used [Square Bracket] placeholders,
+# which the Fill & Generate flow can't fill. This pass rewrites those into
+# {{VariableName}} syntax so every template gets working fill values. It is
+# idempotent: once a template's brackets are converted there is nothing left
+# to replace, so it simply no-ops on subsequent startups.
+LEGACY_PLACEHOLDER_MAP = [
+    ("[Start Date]", "{{StartDate}}"),
+    ("[End Date]", "{{EndDate}}"),
+    ("[Resume Date]", "{{ResumeDate}}"),
+    ("[Start Time]", "{{StartTime}}"),
+    ("[End Time]", "{{EndTime}}"),
+    ("[Contact Info]", "{{Contact}}"),
+    ("[Venue / Video Link]", "{{Venue}}"),
+    ("[Venue]", "{{Venue}}"),
+    ("[Job Title]", "{{JobTitle}}"),
+    ("[Department]", "{{Department}}"),
+    ("[Amount]", "{{Amount}}"),
+    ("[X days]", "{{Days}}"),
+    ("[X months]", "{{Months}}"),
+    ("[e.g. 9:30 AM \u2013 6:30 PM]", "{{WorkingHours}}"),
+    ("[e.g. 9:30 AM - 6:30 PM]", "{{WorkingHours}}"),
+    ("[Replace this paragraph with the details of your announcement.]", "{{Announcement}}"),
+    ("[Skills / Experience]", "{{Skills}}"),
+    ("[Skills/Experience]", "{{Skills}}"),
+    ("[Application Link/Process]", "{{ApplicationLink}}"),
+    ("[Application Link]", "{{ApplicationLink}}"),
+    ("[Referral Form/Process]", "{{ReferralForm}}"),
+    ("[Referral Form]", "{{ReferralForm}}"),
+    ("[affected area/utility, e.g. air conditioning, elevators, Wi-Fi]", "{{AffectedArea}}"),
+    ("[affected area]", "{{AffectedArea}}"),
+    ("[Date]", "{{Date}}"),
+    ("[Time]", "{{Time}}"),
+]
+
+
+def _convert_text(text: str) -> str:
+    for old, new in LEGACY_PLACEHOLDER_MAP:
+        text = text.replace(old, new)
+    return text
+
+
+def convert_legacy_placeholders(db: Session):
+    """Rewrite [Placeholder] style content to {{Variable}} syntax on all
+    templates (runs every startup; idempotent)."""
+    for r in db.query(TemplateRecord).all():
+        p = dict(r.payload)
+        changed = False
+        for ch in p.get("channels", {}).values():
+            if not isinstance(ch, dict):
+                continue
+            for field in ("content", "subject"):
+                val = ch.get(field)
+                if isinstance(val, str) and "[" in val:
+                    new_val = _convert_text(val)
+                    if new_val != val:
+                        ch[field] = new_val
+                        changed = True
+        if changed:
+            p["variables"] = extract_template_variables(p)
+            r.payload = p
+    db.commit()
+
+
+def fill_missing_variables(db: Session):
+    """Add any variables from the combined library that aren't present yet.
+    Runs every startup so new variables reach already-seeded databases."""
+    existing_var_names = {r.payload.get("name") for r in db.query(VariableRecord).all()}
+    for v in build_variables() + build_library_variables():
+        if v["name"] in existing_var_names:
+            continue
+        db.add(VariableRecord(id=v["id"], payload=v))
+        existing_var_names.add(v["name"])
+    db.commit()
 
 
 def seed_if_empty(db: Session):
@@ -775,3 +990,8 @@ def seed_if_empty(db: Session):
         db.add(ConfigRecord(key=MASTER_DATA_KEY, payload=build_master_data()))
 
     db.commit()
+
+    import_library(db)
+    fill_missing_variables(db)
+    convert_legacy_placeholders(db)
+    sync_demo_user_passwords(db)

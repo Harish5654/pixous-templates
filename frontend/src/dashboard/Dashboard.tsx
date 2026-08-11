@@ -7,12 +7,13 @@ import { useAuthStore } from '../store/authStore';
 import { FileText, CheckCircle2, FileEdit, Star, Plus, Megaphone } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import EmptyState from '../components/EmptyState';
+import DataError from '../components/DataError';
 import FillAndGenerateModal from '../components/FillAndGenerateModal';
 import type { Template } from '../types/template';
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { data: templates, isLoading } = useTemplates();
+  const { data: templates, isLoading, isError } = useTemplates();
   const { favoriteIds } = useFavoritesStore();
   const { recentIds } = useRecentStore();
   const currentUser = useAuthStore((s) => s.user);
@@ -20,11 +21,12 @@ const Dashboard = () => {
   const [previewTemplate, setPreviewTemplate] = useState<Template | null>(null);
 
   if (isLoading) return <div>Loading dashboard...</div>;
+  if (isError) return <DataError message="Couldn't load the dashboard. Check that the server is running and try again." />;
 
   const totalTemplates = templates?.length || 0;
   const publishedTemplates = templates?.filter(t => t.status === 'Published').length || 0;
   const draftTemplates = templates?.filter(t => t.status === 'Draft').length || 0;
-  const activeNotices = templates?.filter(t => t.status === 'Published' && t.publishing.notificationBehavior.pinToNoticeBoard).length || 0;
+  const activeNotices = templates?.filter(t => t.status === 'Published' && t.publishing?.notificationBehavior?.pinToNoticeBoard).length || 0;
 
   const openTemplate = (t: Template) => {
     if (canAuthor) navigate(`/templates/${t.id}/edit`);

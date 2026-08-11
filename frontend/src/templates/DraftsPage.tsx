@@ -3,12 +3,14 @@ import { useTemplates } from '../api/queries';
 import { FileEdit } from 'lucide-react';
 import TemplateCard from '../components/TemplateCard';
 import EmptyState from '../components/EmptyState';
+import DataError from '../components/DataError';
 
 const DraftsPage = () => {
   const navigate = useNavigate();
-  const { data: templates, isLoading } = useTemplates();
+  const { data: templates, isLoading, isError } = useTemplates();
 
   if (isLoading) return <div>Loading drafts...</div>;
+  if (isError) return <DataError message="Couldn't load drafts. Check that the server is running and try again." />;
 
   const drafts = templates?.filter((t) => t.status === 'Draft') || [];
 
