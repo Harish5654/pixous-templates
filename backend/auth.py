@@ -23,7 +23,7 @@ if ENVIRONMENT == "production" and JWT_SECRET == _INSECURE_DEFAULT_SECRET:
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
-
+        
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
