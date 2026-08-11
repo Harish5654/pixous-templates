@@ -19,7 +19,6 @@ jobs:
           host: 34.192.33.171
           username: ubuntu
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          known_hosts: ${{ secrets.DEPLOY_HOST_KEY }}
           timeout: 600s
           command_timeout: 15m
           script: |
