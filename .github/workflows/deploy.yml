@@ -39,7 +39,14 @@ jobs:
 
             echo "== restart service =="
             sudo systemctl restart pixous
-            sleep 4
-            echo "== health check =="
-            curl -sf http://127.0.0.1:9090/health || exit 1
-            echo "DEPLOY OK"
+            echo "== health check (retry up to 90s) =="
+            for i in $(seq 1 30); do
+              if curl -sf http://127.0.0.1:9090/health >/dev/null; then
+                echo "HEALTH OK"
+                echo "DEPLOY OK"
+                exit 0
+              fi
+              sleep 3
+            done
+            echo "HEALTH CHECK FAILED"
+            exit 1
