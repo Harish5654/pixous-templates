@@ -19,6 +19,7 @@ jobs:
           host: 34.192.33.171
           username: ubuntu
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: GROQ_API_KEY,OPENAI_API_KEY,GEMINI_API_KEY
           timeout: 600s
           command_timeout: 15m
           script: |
@@ -31,6 +32,17 @@ jobs:
             echo "== backend deps =="
             cd /srv/pixous/backend
             venv/bin/pip install -r requirements.txt -q
+
+            echo "== configure AI provider keys (update-or-append, never touches other keys) =="
+            touch .env
+            for key in GROQ_API_KEY OPENAI_API_KEY GEMINI_API_KEY; do
+              val=$(eval echo \$$key)
+              if [ -n "$val" ]; then
+                grep -v "^${key}=" .env > .env.tmp || true
+                mv .env.tmp .env
+                printf '%s=%s\n' "$key" "$val" >> .env
+              fi
+            done
 
             echo "== frontend build =="
             cd /srv/pixous/frontend

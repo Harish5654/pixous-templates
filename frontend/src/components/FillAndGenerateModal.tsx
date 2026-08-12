@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { X, Copy, FileDown, FileText, Printer, Check } from 'lucide-react';
+import { copyText } from '../utils/clipboard';
 import DOMPurify from 'dompurify';
 import type { Template, SectionData, ChecklistItem } from '../types/template';
 import { useVariables } from '../api/queries';
@@ -184,22 +185,8 @@ const FillAndGenerateModal = ({ template, onClose }: FillAndGenerateModalProps) 
   const handleCopy = async () => {
     const html = buildExportHtml();
     const plain = stripHtml(html);
-    try {
-      const ClipboardItemCtor = (window as any).ClipboardItem;
-      if (navigator.clipboard && ClipboardItemCtor) {
-        await navigator.clipboard.write([
-          new ClipboardItemCtor({
-            'text/html': new Blob([html], { type: 'text/html' }),
-            'text/plain': new Blob([plain], { type: 'text/plain' }),
-          }),
-        ]);
-      } else {
-        await navigator.clipboard.writeText(plain);
-      }
-      setCopyStatus('done');
-    } catch {
-      setCopyStatus('error');
-    }
+    const ok = await copyText(plain, html);
+    setCopyStatus(ok ? 'done' : 'error');
     setTimeout(() => setCopyStatus('idle'), 2000);
   };
 

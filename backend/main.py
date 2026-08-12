@@ -405,10 +405,19 @@ def update_master_data(body: MasterDataUpdate, db: Session = Depends(get_db), us
 def get_variables(db: Session = Depends(get_db), user: UserRecord = Depends(get_current_user)):
     return [r.payload for r in db.query(VariableRecord).all()]
 
-# AI Actions (Groq)
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.3-70b-versatile"
+# AI Actions — multi-provider with automatic key rotation and provider failover.
+# Each *_API_KEY may hold a comma-separated list of keys; every key is tried in
+# order before moving on to the next provider (Groq -> OpenAI -> Gemini).
+def _key_list(raw: str) -> List[str]:
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+GROQ_KEYS = _key_list(os.environ.get("GROQ_API_KEY", ""))
+OPENAI_KEYS = _key_list(os.environ.get("OPENAI_API_KEY", ""))
+GEMINI_KEYS = _key_list(os.environ.get("GEMINI_API_KEY", ""))
+
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
 AI_ACTION_INSTRUCTIONS = {
     "Improve": "Improve the clarity and quality of this text while keeping the same meaning and length.",
@@ -428,8 +437,8 @@ class AIActionRequest(BaseModel):
 
 @api.post("/ai/action")
 def ai_action(req: AIActionRequest, user: UserRecord = Depends(require_roles("Admin", "Editor"))):
-    if not GROQ_API_KEY:
-        raise HTTPException(status_code=500, detail="GROQ_API_KEY is not configured on the server")
+    if not (GROQ_KEYS or OPENAI_KEYS or GEMINI_KEYS):
+        raise HTTPException(status_code=500, detail="No AI provider API keys are configured on the server")
 
     if req.action == "Translate":
         instruction = f"Translate this text into {req.targetLanguage or 'Spanish'}."
@@ -445,26 +454,50 @@ def ai_action(req: AIActionRequest, user: UserRecord = Depends(require_roles("Ad
         "Return only the rewritten HTML with no explanation, no markdown code fences, and no extra commentary."
     )
 
-    try:
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"{instruction}\n\nText:\n{req.content}"},
+    ]
+
+    def _openai_chat(url: str, api_key: str, model: str, timeout: int = 45) -> str:
         response = requests.post(
-            GROQ_API_URL,
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": GROQ_MODEL,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"{instruction}\n\nText:\n{req.content}"}
-                ],
-                "temperature": 0.4,
-            },
-            timeout=30,
+            url,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": model, "messages": messages, "temperature": 0.4},
+            timeout=timeout,
         )
         response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"].strip()
+
+    def _gemini_chat(api_key: str, model: str, timeout: int = 45) -> str:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        contents = []
+        for m in messages:
+            role = "model" if m["role"] == "assistant" else "user"
+            contents.append({"role": role, "parts": [{"text": m["content"]}]})
+        payload = {"contents": contents, "generationConfig": {"temperature": 0.4}}
+        response = requests.post(url, params={"key": api_key}, json=payload, timeout=timeout)
+        response.raise_for_status()
         data = response.json()
-        result = data["choices"][0]["message"]["content"].strip()
-        return {"result": result}
-    except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"Groq API request failed: {e}")
+        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+    # Provider order: Groq -> OpenAI -> Gemini, each key tried in turn.
+    attempts: List[tuple] = []
+    for key in GROQ_KEYS:
+        attempts.append(("groq", lambda k=key: _openai_chat("https://api.groq.com/openai/v1/chat/completions", k, GROQ_MODEL)))
+    for key in OPENAI_KEYS:
+        attempts.append(("openai", lambda k=key: _openai_chat("https://api.openai.com/v1/chat/completions", k, OPENAI_MODEL)))
+    for key in GEMINI_KEYS:
+        attempts.append(("gemini", lambda k=key: _gemini_chat(k, GEMINI_MODEL)))
+
+    errors: List[str] = []
+    for name, attempt in attempts:
+        try:
+            return {"result": attempt()}
+        except (requests.RequestException, KeyError, IndexError, TypeError, ValueError) as e:
+            errors.append(f"{name}: {e}")
+            continue
+    raise HTTPException(status_code=502, detail="All AI providers failed: " + " | ".join(errors[-4:]))
 
 
 app.include_router(api)

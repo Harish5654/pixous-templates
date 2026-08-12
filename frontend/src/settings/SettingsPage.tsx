@@ -4,6 +4,7 @@ import { useUIStore } from '../store/uiStore';
 import { useAuthStore } from '../store/authStore';
 import { useResetPassword, useUsers } from '../api/queries';
 import DataError from '../components/DataError';
+import { copyText } from '../utils/clipboard';
 import type { User as UserAccount } from '../types/user';
 import Accordion from '../components/Accordion';
 
@@ -92,13 +93,9 @@ const UserManagement = () => {
 
   const copyPassword = async () => {
     if (!result) return;
-    try {
-      await navigator.clipboard.writeText(result.password);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopied(false);
-    }
+    const ok = await copyText(result.password);
+    setCopied(ok);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (

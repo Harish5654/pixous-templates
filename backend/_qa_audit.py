@@ -156,14 +156,14 @@ if ADMIN and EDITOR:
     check("employee ai -> 403", r.status_code == 403)
     r = requests.post(f"{API}/ai/action", json={"action": "BogusAction", "content": "x"}, headers=auth(EDITOR))
     check("unknown ai action -> 400", r.status_code == 400, r.text)
-    if os.environ.get("GROQ_API_KEY"):
+    if os.environ.get("GROQ_API_KEY") or os.environ.get("OPENAI_API_KEY") or os.environ.get("GEMINI_API_KEY"):
         t0 = time.time()
         r = requests.post(f"{API}/ai/action", json={"action": "Grammar", "content": "<p>This are a test.</p>"}, headers=auth(EDITOR))
         dt = time.time() - t0
-        check(f"ai real call (Groq key present): {r.status_code} in {dt:.1f}s", r.status_code == 200, r.text[:200])
+        check(f"ai real call (provider key present): {r.status_code} in {dt:.1f}s", r.status_code == 200, r.text[:200])
     else:
         r = requests.post(f"{API}/ai/action", json={"action": "Grammar", "content": "x"}, headers=auth(EDITOR))
-        check("ai without key -> clean 500 message", r.status_code == 500 and "GROQ_API_KEY" in r.json().get("detail", ""), r.text)
+        check("ai without key -> clean 500 message", r.status_code == 500 and "No AI provider API keys" in r.json().get("detail", ""), r.text)
 
 # ---------- SPA serving (single-service deploy) ----------
 r = requests.get(f"{BASE}/")
