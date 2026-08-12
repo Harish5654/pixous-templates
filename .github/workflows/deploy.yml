@@ -15,6 +15,10 @@ jobs:
 
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         with:
           host: 34.192.33.171
           username: ubuntu
@@ -35,14 +39,21 @@ jobs:
 
             echo "== configure AI provider keys (update-or-append, never touches other keys) =="
             touch .env
-            for key in GROQ_API_KEY OPENAI_API_KEY GEMINI_API_KEY; do
-              val=$(eval echo \$$key)
-              if [ -n "$val" ]; then
-                grep -v "^${key}=" .env > .env.tmp || true
-                mv .env.tmp .env
-                printf '%s=%s\n' "$key" "$val" >> .env
-              fi
-            done
+            if [ -n "$GROQ_API_KEY" ]; then
+              grep -v '^GROQ_API_KEY=' .env > .env.tmp || true
+              mv .env.tmp .env
+              printf 'GROQ_API_KEY=%s\n' "$GROQ_API_KEY" >> .env
+            fi
+            if [ -n "$OPENAI_API_KEY" ]; then
+              grep -v '^OPENAI_API_KEY=' .env > .env.tmp || true
+              mv .env.tmp .env
+              printf 'OPENAI_API_KEY=%s\n' "$OPENAI_API_KEY" >> .env
+            fi
+            if [ -n "$GEMINI_API_KEY" ]; then
+              grep -v '^GEMINI_API_KEY=' .env > .env.tmp || true
+              mv .env.tmp .env
+              printf 'GEMINI_API_KEY=%s\n' "$GEMINI_API_KEY" >> .env
+            fi
 
             echo "== frontend build =="
             cd /srv/pixous/frontend
