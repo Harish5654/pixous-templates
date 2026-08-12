@@ -32,8 +32,16 @@ const escapeHtml = (value: string): string =>
 
 const stripHtml = (html: string): string => {
   const div = document.createElement('div');
-  div.innerHTML = html;
-  return div.textContent || div.innerText || '';
+  div.innerHTML = html
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|section)>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '• ');
+  return (div.textContent || '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 };
 
 const slugify = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
@@ -173,13 +181,56 @@ const FillAndGenerateModal = ({ template, onClose }: FillAndGenerateModalProps) 
     setValues((prev) => ({ ...prev, [name]: value }));
   };
 
+  // The editor (TipTap) content carries formatting only via the app's global
+  // CSS. When its HTML is pasted into Word, Google Docs, Outlook or Gmail that
+  // CSS is gone, so paragraph spacing, headings and lists collapse to the
+  // recipient's defaults. Inline the base styles onto block elements (keeping
+  // any element-specific styles like text-align) before exporting.
+  const normalizeExportStyles = (html: string): string => {
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    const apply = (selector: string, baseStyles: string) => {
+      div.querySelectorAll(selector).forEach((el) => {
+        const element = el as HTMLElement;
+        const existing = element.getAttribute('style') || '';
+        element.setAttribute('style', `${baseStyles}${existing ? `;${existing}` : ''}`);
+      });
+    };
+    apply('p', 'margin:0 0 12px;line-height:1.6;');
+    apply('h1', 'font-size:1.6em;font-weight:700;line-height:1.3;margin:0 0 12px;');
+    apply('h2', 'font-size:1.35em;font-weight:700;line-height:1.3;margin:0 0 12px;');
+    apply('h3', 'font-size:1.15em;font-weight:600;line-height:1.3;margin:0 0 10px;');
+    apply('h4', 'font-size:1em;font-weight:600;line-height:1.3;margin:0 0 8px;');
+    apply('ul', 'margin:0 0 12px;padding-left:24px;');
+    apply('ol', 'margin:0 0 12px;padding-left:24px;');
+    apply('li', 'margin:0 0 6px;line-height:1.6;');
+    apply('blockquote', 'margin:0 0 12px;padding:0 0 0 16px;border-left:3px solid #d0d0d0;color:#444;');
+    apply('table', 'border-collapse:collapse;width:100%;');
+    apply('img', 'max-width:100%;height:auto;');
+    apply('a', 'color:#173F5F;text-decoration:underline;');
+    return div.innerHTML;
+  };
+
   const buildExportHtml = () => {
     const body = channel
       ? `${exportSubject ? `<h2 style="margin:0 0 16px;">${exportSubject}</h2>` : ''}<div>${exportContent}</div>`
       : hasStructuredContent
         ? structuredContentHtml
         : `<p>${escapeHtml(template.description || '')}</p>`;
-    return `${buildLetterheadHtml(template.branding)}${buildCompanyDetailsHtml(template.branding)}${body}${buildSignatureHtml(template.branding, template.owner)}${buildFooterHtml(template.branding)}`;
+    const inner = `${buildLetterheadHtml(template.branding)}${buildCompanyDetailsHtml(template.branding)}${body}${buildSignatureHtml(template.branding, template.owner)}${buildFooterHtml(template.branding)}`;
+    // Base container + embedded style block: keeps fonts, spacing and margins
+    // consistent no matter where the copied HTML is pasted.
+    return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#111;margin:0;padding:0;">
+  <style>
+    p{margin:0 0 12px;line-height:1.6;}
+    h1,h2,h3,h4{line-height:1.3;margin:0 0 12px;}
+    ul,ol{margin:0 0 12px;padding-left:24px;}
+    li{margin:0 0 6px;line-height:1.6;}
+    table{border-collapse:collapse;width:100%;}
+    img{max-width:100%;height:auto;}
+  </style>
+  ${normalizeExportStyles(inner)}
+</div>`;
   };
 
   const handleCopy = async () => {
