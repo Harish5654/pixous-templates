@@ -47,7 +47,6 @@ export interface AudienceSelection {
 export interface NotificationBehavior {
   requireAcknowledgement: boolean;
   allowComments: boolean;
-  pinToNoticeBoard: boolean;
 }
 
 export interface PublishingConfig {

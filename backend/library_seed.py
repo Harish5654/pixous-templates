@@ -273,7 +273,7 @@ def _default_publishing():
         "effectiveDate": "",
         "expiryDate": "",
         "audience": {"allEmployees": True, "departments": [], "locations": [], "roles": []},
-        "notificationBehavior": {"requireAcknowledgement": False, "allowComments": True, "pinToNoticeBoard": False},
+        "notificationBehavior": {"requireAcknowledgement": False, "allowComments": True},
     }
 
 

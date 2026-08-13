@@ -4,7 +4,7 @@ import { useTemplates } from '../api/queries';
 import { useFavoritesStore } from '../store/favoritesStore';
 import { useRecentStore } from '../store/recentStore';
 import { useAuthStore } from '../store/authStore';
-import { FileText, CheckCircle2, FileEdit, Star, Plus, Megaphone } from 'lucide-react';
+import { FileText, CheckCircle2, FileEdit, Star, Plus } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import EmptyState from '../components/EmptyState';
 import DataError from '../components/DataError';
@@ -26,7 +26,6 @@ const Dashboard = () => {
   const totalTemplates = templates?.length || 0;
   const publishedTemplates = templates?.filter(t => t.status === 'Published').length || 0;
   const draftTemplates = templates?.filter(t => t.status === 'Draft').length || 0;
-  const activeNotices = templates?.filter(t => t.status === 'Published' && t.publishing?.notificationBehavior?.pinToNoticeBoard).length || 0;
 
   const openTemplate = (t: Template) => {
     if (canAuthor) navigate(`/templates/${t.id}/edit`);
@@ -53,7 +52,6 @@ const Dashboard = () => {
         <StatCard label="Drafts" value={draftTemplates} icon={FileEdit} accent="warning" />
         <StatCard label="Favorites" value={favoriteIds.length} icon={Star} />
         <StatCard label="Recently Opened" value={recentIds.length} icon={FileEdit} />
-        <StatCard label="Active Notices" value={activeNotices} icon={Megaphone} />
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>

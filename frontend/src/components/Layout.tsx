@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, FileText, Settings, LogOut, Search, User,
-  Folder, FileEdit, ClipboardCheck, Star, Clock, PanelLeft, Megaphone, Database
+  Folder, FileEdit, ClipboardCheck, Star, Clock, PanelLeft, Database
 } from 'lucide-react';
 import { useUIStore } from '../store/uiStore';
 import { useAuthStore } from '../store/authStore';
@@ -13,7 +13,6 @@ const NAV_ITEMS: { to: string; label: string; icon: typeof LayoutDashboard; end:
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/templates', label: 'Templates', icon: FileText, end: true },
   { to: '/templates/categories', label: 'Categories', icon: Folder, end: true },
-  { to: '/notice-board', label: 'Notice Board', icon: Megaphone, end: true },
   { to: '/drafts', label: 'Drafts', icon: FileEdit, end: true },
   { to: '/approvals', label: 'Approvals', icon: ClipboardCheck, end: true },
   { to: '/favorites', label: 'Favorites', icon: Star, end: true },

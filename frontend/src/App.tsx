@@ -9,7 +9,6 @@ const Dashboard = lazy(() => import('./dashboard/Dashboard'));
 const TemplatePage = lazy(() => import('./templates/TemplatePage'));
 const TemplateEditor = lazy(() => import('./templates/editor/TemplateEditor'));
 const CategoriesPage = lazy(() => import('./templates/CategoriesPage'));
-const NoticeBoardPage = lazy(() => import('./templates/NoticeBoardPage'));
 const DraftsPage = lazy(() => import('./templates/DraftsPage'));
 const FavoritesPage = lazy(() => import('./templates/FavoritesPage'));
 const RecentPage = lazy(() => import('./templates/RecentPage'));
@@ -36,7 +35,6 @@ function App() {
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="templates" element={<TemplatePage />} />
               <Route path="templates/categories" element={<CategoriesPage />} />
-              <Route path="notice-board" element={<NoticeBoardPage />} />
               <Route element={<RequireRole roles={['Admin', 'Editor']} />}>
                 <Route path="templates/new" element={<TemplateEditor />} />
                 <Route path="templates/:id/edit" element={<TemplateEditor />} />

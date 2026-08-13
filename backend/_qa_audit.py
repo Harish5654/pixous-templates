@@ -80,7 +80,7 @@ def minimal_template(name="QA Audit " + uuid.uuid4().hex[:8]):
         "allowed_attachments": [], "sections": [], "checklistItems": [], "signoffRole": "",
         "publishing": {"priority": "Medium", "publishImmediately": False, "effectiveDate": "", "expiryDate": "",
         "audience": {"allEmployees": True, "departments": [], "locations": [], "roles": []},
-        "notificationBehavior": {"requireAcknowledgement": False, "allowComments": False, "pinToNoticeBoard": False}},
+        "notificationBehavior": {"requireAcknowledgement": False, "allowComments": False}},
         "eventTrigger": {"enabled": False, "eventType": "", "autoGenerate": False, "autoPublish": False, "leadTimeDays": 0},
         "banner": "", "variables": [], "approval_required": False, "approved_by": "",
         "created_at": "", "updated_at": "",

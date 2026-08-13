@@ -118,7 +118,6 @@ class AudienceSelection(BaseModel):
 class NotificationBehavior(BaseModel):
     requireAcknowledgement: bool
     allowComments: bool
-    pinToNoticeBoard: bool
 
 class PublishingConfig(BaseModel):
     priority: str

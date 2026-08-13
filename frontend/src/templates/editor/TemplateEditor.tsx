@@ -26,7 +26,7 @@ const DEFAULT_PUBLISHING: PublishingConfig = {
   effectiveDate: '',
   expiryDate: '',
   audience: { allEmployees: true, departments: [], locations: [], roles: [] },
-  notificationBehavior: { requireAcknowledgement: false, allowComments: true, pinToNoticeBoard: false }
+  notificationBehavior: { requireAcknowledgement: false, allowComments: true }
 };
 
 const DEFAULT_EVENT_TRIGGER: EventTrigger = {
@@ -270,7 +270,7 @@ const TemplateEditor = () => {
     setMetadata(prev => ({ ...prev, branding: { ...prev.branding, [field]: value } }));
   };
 
-  // --- Notice Board Methods ---
+  // --- Attachment Methods ---
   const addAttachment = () => {
     const name = newAttachment.trim();
     if (!name) return;
@@ -657,7 +657,7 @@ const TemplateEditor = () => {
             ))}
           </div>
         ) : isNoticeBuilder ? (
-          /* Notice Board Builder Mode (Phase 6) */
+          /* Notice-category content builder (banner + rich text) */
           <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
             <div className="form-group">
               <label className="form-label" htmlFor="notice-banner-main">Banner Image URL</label>
@@ -1044,10 +1044,6 @@ const TemplateEditor = () => {
             <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.9rem', cursor: 'pointer' }}>
               <input type="checkbox" checked={metadata.publishing.notificationBehavior.allowComments} onChange={e => handleNotificationBehaviorChange('allowComments', e.target.checked)} />
               Allow Comments
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.9rem', cursor: 'pointer' }}>
-              <input type="checkbox" checked={metadata.publishing.notificationBehavior.pinToNoticeBoard} onChange={e => handleNotificationBehaviorChange('pinToNoticeBoard', e.target.checked)} />
-              Pin to Notice Board
             </label>
           </div>
         </Accordion>

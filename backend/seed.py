@@ -30,7 +30,14 @@ def mark_password_reset(db: Session, email: str):
         record = ConfigRecord(key=PASSWORD_RESET_KEY, payload={"emails": []})
         db.add(record)
     if email not in record.payload["emails"]:
-        record.payload["emails"].append(email)
+        # Re-assign the attribute (not in-place list append): SQLAlchemy does not
+        # track mutations inside JSON columns, so an in-place append would be
+        # silently lost on commit and the marker would never persist past the
+        # first email.
+        record.payload = {
+            **record.payload,
+            "emails": [*record.payload["emails"], email],
+        }
     db.commit()
 
 VAR_NAME_PATTERN = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
@@ -118,8 +125,7 @@ def get_default_publishing():
         },
         "notificationBehavior": {
             "requireAcknowledgement": False,
-            "allowComments": True,
-            "pinToNoticeBoard": False
+            "allowComments": True
         }
     }
 
@@ -333,7 +339,6 @@ def build_templates():
     for i, hr in enumerate(hr_templates, start=200):
         pub = get_default_publishing()
         if hr["name"] == "Company Announcement" or hr["name"] == "Holiday Notice (Diwali)":
-            pub["notificationBehavior"]["pinToNoticeBoard"] = True
             pub["priority"] = "High"
         if "Policy" in hr["name"]:
             pub["notificationBehavior"]["requireAcknowledgement"] = True
@@ -405,7 +410,6 @@ def build_templates():
     for i, ev in enumerate(employee_event_templates, start=300):
         pub = get_default_publishing()
         pub["notificationBehavior"]["allowComments"] = True
-        pub["notificationBehavior"]["pinToNoticeBoard"] = ev["eventType"] in ["Birthday", "Anniversary", "Award", "Achievement"]
 
         templates.append({
             "id": str(i),
@@ -445,74 +449,6 @@ def build_templates():
                 "leadTimeDays": ev["leadTimeDays"]
             },
             "banner": ""
-        })
-
-    notice_templates = [
-        {"name": "Phishing Awareness Alert", "category": "Security", "department": "IT", "priority": "Critical",
-         "requireAcknowledgement": True, "startDate": "2026-08-01", "endDate": "2026-08-31", "attachments": ["SecurityGuidelines.pdf"],
-         "content": "<p>We've seen an increase in phishing attempts targeting employee inboxes. Do not click links or download attachments from unknown senders, and report suspicious emails to the Security team immediately.</p>"},
-        {"name": "Scheduled Server Maintenance", "category": "Infrastructure", "department": "IT", "priority": "High",
-         "requireAcknowledgement": False, "startDate": "2026-08-10", "endDate": "2026-08-11", "attachments": [],
-         "content": "<p>Core infrastructure will undergo scheduled maintenance this weekend. Expect intermittent downtime for internal tools between 11 PM and 3 AM.</p>"},
-        {"name": "New IT Helpdesk Portal", "category": "IT", "department": "IT", "priority": "Normal",
-         "requireAcknowledgement": False, "startDate": "2026-08-05", "endDate": "2026-09-05", "attachments": [],
-         "content": "<p>All IT support requests should now be raised through the new Helpdesk Portal instead of email. This gives you real-time ticket tracking and faster response times.</p>"},
-        {"name": "Updated Code of Conduct", "category": "HR", "department": "HR", "priority": "High",
-         "requireAcknowledgement": True, "startDate": "2026-08-01", "endDate": "", "attachments": ["CodeOfConduct.pdf"],
-         "content": "<p>The Employee Code of Conduct has been updated for 2026. Please review the attached document and confirm your acknowledgement.</p>"},
-        {"name": "Cafeteria Renovation Notice", "category": "Facilities", "department": "Facilities", "priority": "Normal",
-         "requireAcknowledgement": False, "startDate": "2026-08-15", "endDate": "2026-09-15", "attachments": [],
-         "content": "<p>The main cafeteria will be under renovation. A temporary pantry setup will be available on the 3rd floor during this period.</p>"},
-        {"name": "Project Phoenix Go-Live", "category": "Projects", "department": "Engineering", "priority": "High",
-         "requireAcknowledgement": False, "startDate": "2026-08-20", "endDate": "2026-08-27", "attachments": [],
-         "content": "<p>Project Phoenix goes live next week. All teams should freeze non-critical deployments during the release window.</p>"},
-        {"name": "Quarterly Town Hall Recap", "category": "Management", "department": "Management", "priority": "Normal",
-         "requireAcknowledgement": False, "startDate": "2026-08-03", "endDate": "", "attachments": ["TownHallSlides.pdf"],
-         "content": "<p>Thank you to everyone who joined this quarter's town hall. Slides and a recording are attached for anyone who missed it.</p>"},
-        {"name": "Support Ticketing SLA Update", "category": "Support", "department": "IT", "priority": "Normal",
-         "requireAcknowledgement": False, "startDate": "2026-08-01", "endDate": "", "attachments": [],
-         "content": "<p>Support ticket SLAs have been updated: Critical issues are now targeted for a 2-hour first response instead of 4 hours.</p>"},
-    ]
-    for i, nb in enumerate(notice_templates, start=400):
-        pub = get_default_publishing()
-        pub["priority"] = nb["priority"]
-        pub["publishImmediately"] = not bool(nb["startDate"])
-        pub["effectiveDate"] = nb["startDate"]
-        pub["expiryDate"] = nb["endDate"]
-        pub["notificationBehavior"]["requireAcknowledgement"] = nb["requireAcknowledgement"]
-        pub["notificationBehavior"]["pinToNoticeBoard"] = True
-
-        templates.append({
-            "id": str(i),
-            "name": nb["name"],
-            "description": f"Company notice under {nb['category']}.",
-            "department": nb["department"],
-            "category": nb["category"],
-            "tags": ["notice-board", nb["category"].lower()],
-            "status": "Published",
-            "owner": "Notice Board Admin",
-            "created_by": "Notice Board Admin",
-            "updated_by": "Notice Board Admin",
-            "version": 1,
-            "language": "English",
-            "visibility": "Internal",
-            "branding": {
-                "logoEnabled": True,
-                "signatureEnabled": False,
-                "footerEnabled": True,
-                "letterheadEnabled": False,
-                "companyDetailsEnabled": False
-            },
-            "channels": {
-                "notice": {"enabled": True, "subject": "", "content": nb["content"]}
-            },
-            "allowed_attachments": nb["attachments"],
-            "sections": [],
-            "checklistItems": [],
-            "signoffRole": "",
-            "publishing": pub,
-            "eventTrigger": get_default_event_trigger(),
-            "banner": f"https://picsum.photos/seed/{nb['category'].lower()}/900/240"
         })
 
     # Business Documents
@@ -967,6 +903,29 @@ def fill_missing_variables(db: Session):
     db.commit()
 
 
+NOTICE_BOARD_CLEANUP_KEY = "notice-board-removed-v1"
+
+
+def cleanup_notice_board_templates(db: Session):
+    """One-time migration: the Notice Board feature has been removed, so delete
+    the seeded demo notices (identified by their 'notice-board' tag) from any
+    database that already received them. Keyed so it runs exactly once and
+    only ever touches templates carrying the notice-board tag — never
+    user-created content."""
+    if db.query(ConfigRecord).filter(ConfigRecord.key == NOTICE_BOARD_CLEANUP_KEY).first():
+        return
+    deleted = 0
+    for r in db.query(TemplateRecord).all():
+        if "notice-board" in r.payload.get("tags", []):
+            db.delete(r)
+            deleted += 1
+    db.add(ConfigRecord(
+        key=NOTICE_BOARD_CLEANUP_KEY,
+        payload={"deleted": deleted, "at": datetime.now(timezone.utc).isoformat()},
+    ))
+    db.commit()
+
+
 def seed_if_empty(db: Session):
     if db.query(TemplateRecord).count() == 0:
         for t in build_templates():
@@ -994,4 +953,5 @@ def seed_if_empty(db: Session):
     import_library(db)
     fill_missing_variables(db)
     convert_legacy_placeholders(db)
+    cleanup_notice_board_templates(db)
     sync_demo_user_passwords(db)
